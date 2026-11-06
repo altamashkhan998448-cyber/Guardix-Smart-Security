@@ -1,6 +1,7 @@
 package com.guardix.security
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -9,7 +10,6 @@ import android.graphics.Typeface
 import android.os.Bundle
 import android.text.InputType
 import android.util.Base64
-import android.util.Size
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.InputMethodManager
@@ -24,7 +24,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
-import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
@@ -37,6 +36,7 @@ import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.SecretKeyFactory
@@ -64,9 +64,11 @@ class MainActivity : ComponentActivity() {
 
     private var faceStep = 0
     private var eyesClosed = false
+    private var faceFinished = false
 
     private val processing = AtomicBoolean(false)
-    private val cameraExecutor = Executors.newSingleThreadExecutor()
+    private val cameraExecutor: ExecutorService =
+        Executors.newSingleThreadExecutor()
 
     private val cameraPermissionLauncher =
         registerForActivityResult(
@@ -99,6 +101,8 @@ class MainActivity : ComponentActivity() {
             setPadding(24, 25, 24, 25)
             setBackgroundColor(bgColor)
         }
+
+        statusText = null
     }
 
     private fun addTitle(text: String) {
@@ -110,6 +114,7 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setPadding(0, 15, 0, 15)
         }
+
         root.addView(title)
     }
 
@@ -121,6 +126,7 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setPadding(8, 12, 8, 12)
         }
+
         root.addView(view)
     }
 
@@ -184,6 +190,7 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setPadding(8, 12, 8, 12)
         }
+
         root.addView(statusText)
     }
 
@@ -319,51 +326,51 @@ class MainActivity : ComponentActivity() {
                 password
             ).addOnCompleteListener { task ->
 
-                if (task.isSuccessful) {
-                    val user = auth.currentUser
-
-                    if (user == null) {
-                        showStatus("Account बनाया गया, लेकिन User नहीं मिला।")
-                        return@addOnCompleteListener
-                    }
-
-                    val profile = UserProfileChangeRequest.Builder()
-                        .setDisplayName(name)
-                        .build()
-
-                    user.updateProfile(profile)
-                        .addOnCompleteListener { profileTask ->
-
-                            if (!profileTask.isSuccessful) {
-                                showStatus("Profile सेव नहीं हो पाया।")
-                                return@addOnCompleteListener
-                            }
-
-                            val uid = user.uid
-
-                            prefs.edit()
-                                .putString("name_$uid", name)
-                                .putString("phone_$uid", phone)
-                                .putBoolean("setup_$uid", false)
-                                .putBoolean("face_$uid", false)
-                                .apply()
-
-                            auth.signOut()
-
-                            Toast.makeText(
-                                this,
-                                "Account Created Successfully",
-                                Toast.LENGTH_LONG
-                            ).show()
-
-                            showSignIn()
-                        }
-                } else {
+                if (!task.isSuccessful) {
                     showStatus(
                         task.exception?.localizedMessage
                             ?: "Account नहीं बन पाया।"
                     )
+                    return@addOnCompleteListener
                 }
+
+                val user = auth.currentUser
+
+                if (user == null) {
+                    showStatus("Account बनाया गया, लेकिन User नहीं मिला।")
+                    return@addOnCompleteListener
+                }
+
+                val profile = UserProfileChangeRequest.Builder()
+                    .setDisplayName(name)
+                    .build()
+
+                user.updateProfile(profile)
+                    .addOnCompleteListener { profileTask ->
+
+                        prefs.edit()
+                            .putString("name_${user.uid}", name)
+                            .putString("phone_${user.uid}", phone)
+                            .putBoolean("setup_${user.uid}", false)
+                            .putBoolean("face_${user.uid}", false)
+                            .apply()
+
+                        auth.signOut()
+
+                        val message = if (profileTask.isSuccessful) {
+                            "Account सफलतापूर्वक बन गया। अब Sign In करें।"
+                        } else {
+                            "Account बन गया। अब Email और Password से Sign In करें।"
+                        }
+
+                        Toast.makeText(
+                            this,
+                            message,
+                            Toast.LENGTH_LONG
+                        ).show()
+
+                        showSignIn()
+                    }
             }
         }
 
@@ -558,10 +565,14 @@ class MainActivity : ComponentActivity() {
             256
         )
 
-        return SecretKeyFactory
-            .getInstance("PBKDF2WithHmacSHA1")
-            .generateSecret(spec)
-            .encoded
+        return try {
+            SecretKeyFactory
+                .getInstance("PBKDF2WithHmacSHA1")
+                .generateSecret(spec)
+                .encoded
+        } finally {
+            spec.clearPassword()
+        }
     }
 
     private fun verifyPin(pin: String): Boolean {
@@ -633,12 +644,13 @@ class MainActivity : ComponentActivity() {
         setContentView(scroll(root))
     }
 
-    // FACE CAMERA
+    // CAMERA PERMISSION
 
     private fun startFaceRegistration() {
         cameraMode = "registration"
         faceStep = 0
         eyesClosed = false
+        faceFinished = false
         requestCameraPermission()
     }
 
@@ -646,6 +658,7 @@ class MainActivity : ComponentActivity() {
         cameraMode = "verification"
         faceStep = 0
         eyesClosed = false
+        faceFinished = false
         requestCameraPermission()
     }
 
@@ -685,6 +698,9 @@ class MainActivity : ComponentActivity() {
         setContentView(scroll(root))
     }
 
+    // FACE CAMERA
+
+    @SuppressLint("SetTextI18n")
     private fun startFaceCamera() {
         createRoot()
 
@@ -727,15 +743,4 @@ class MainActivity : ComponentActivity() {
                 FaceDetectorOptions.PERFORMANCE_MODE_FAST
             )
             .setClassificationMode(
-                FaceDetectorOptions.CLASSIFICATION_MODE_ALL
-            )
-            .build()
-
-        faceDetector = FaceDetection.getClient(options)
-
-        val future = ProcessCameraProvider.getInstance(this)
-
-        future.addListener({
-
-            try {
-            
+   
