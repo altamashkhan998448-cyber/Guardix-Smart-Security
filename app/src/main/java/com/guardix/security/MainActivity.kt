@@ -1,30 +1,51 @@
 package com.guardix.security
 
-import android.app.Activity
-import android.app.AlertDialog
-import android.os.Bundle
+import android.Manifest
+import android.content.Context
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.InputMethodManager
-import android.content.Context
-import android.content.SharedPreferences
-import android.text.InputType
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.util.Size
+import android.widget.FrameLayout
+import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.core.ImageProxy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserProfileChangeRequest
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.Face
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetector
+import com.google.mlkit.vision.face.FaceDetectorOptions
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
+import android.util.Base64
+import java.util.concurrent.atomic.AtomicBoolean
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
 
     private lateinit var auth: FirebaseAuth
-    private lateinit var root: LinearLayout
     private lateinit var prefs: SharedPreferences
+    private lateinit var root: LinearLayout
 
     private var isHindi = false
     private var statusText: TextView? = null
@@ -32,26 +53,58 @@ class MainActivity : Activity() {
     private val bgColor = Color.rgb(10, 16, 35)
     private val cyanColor = Color.CYAN
 
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var faceDetector: FaceDetector? = null
+    private var cameraPreview: PreviewView? = null
+    private var cameraStatus: TextView? = null
+
+    private val processing =
+        AtomicBoolean(false)
+
+    private var currentUid = ""
+    private var cameraMode = "registration"
+
+    private var faceStep = 0
+    private var eyesOpened = false
+    private var eyesClosed = false
+
+    private val cameraPermissionLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+
+            if (granted) {
+                startFaceCamera()
+            } else {
+                showCameraPermissionError()
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         auth = FirebaseAuth.getInstance()
-        prefs = getSharedPreferences("GuardixSettings", MODE_PRIVATE)
+
+        prefs = getSharedPreferences(
+            "GuardixSettings",
+            MODE_PRIVATE
+        )
 
         showWelcome()
     }
 
-    private fun createRoot(): LinearLayout {
+    private fun createRoot() {
+
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(24, 25, 24, 25)
             setBackgroundColor(bgColor)
         }
-        return root
     }
 
     private fun addTitle(text: String) {
+
         val title = TextView(this).apply {
             this.text = text
             textSize = 29f
@@ -60,10 +113,15 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(0, 15, 0, 15)
         }
+
         root.addView(title)
     }
 
-    private fun addText(text: String, size: Float = 16f) {
+    private fun addText(
+        text: String,
+        size: Float = 16f
+    ) {
+
         val view = TextView(this).apply {
             this.text = text
             textSize = size
@@ -71,6 +129,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(8, 12, 8, 12)
         }
+
         root.addView(view)
     }
 
@@ -78,10 +137,13 @@ class MainActivity : Activity() {
         text: String,
         action: () -> Unit
     ) {
+
         val button = Button(this).apply {
             this.text = text
             isAllCaps = false
-            setOnClickListener { action() }
+            setOnClickListener {
+                action()
+            }
         }
 
         root.addView(
@@ -101,15 +163,18 @@ class MainActivity : Activity() {
     ): EditText {
 
         val input = EditText(this).apply {
+
             this.hint = hint
             textSize = 16f
+
             setTextColor(Color.WHITE)
             setHintTextColor(Color.LTGRAY)
+
             setSingleLine(true)
 
             inputType = if (password) {
-                InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+                InputType.TYPE_CLASS_NUMBER or
+                    InputType.TYPE_NUMBER_VARIATION_PASSWORD
             } else {
                 InputType.TYPE_CLASS_TEXT
             }
@@ -131,6 +196,7 @@ class MainActivity : Activity() {
     }
 
     private fun addStatus() {
+
         statusText = TextView(this).apply {
             text = ""
             textSize = 14f
@@ -138,6 +204,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(8, 12, 8, 12)
         }
+
         root.addView(statusText)
     }
 
@@ -146,9 +213,11 @@ class MainActivity : Activity() {
     }
 
     private fun hideKeyboard() {
+
         val manager =
-            getSystemService(Context.INPUT_METHOD_SERVICE)
-                as InputMethodManager
+            getSystemService(
+                Context.INPUT_METHOD_SERVICE
+            ) as InputMethodManager
 
         manager.hideSoftInputFromWindow(
             root.windowToken,
@@ -157,6 +226,7 @@ class MainActivity : Activity() {
     }
 
     private fun showWelcome() {
+
         createRoot()
 
         addText("🛡️", 65f)
@@ -164,6 +234,7 @@ class MainActivity : Activity() {
         addText("SMART SECURITY", 15f)
 
         val info = if (isHindi) {
+
             """
             ऐप निर्माता
 
@@ -175,7 +246,9 @@ class MainActivity : Activity() {
             इस ऐप को बनाने का उद्देश्य
             मोबाइल सुरक्षा को बेहतर बनाना है।
             """.trimIndent()
+
         } else {
+
             """
             CREATED BY
 
@@ -196,7 +269,7 @@ class MainActivity : Activity() {
             showWelcome()
         }
 
-        addButton("Continue / आगे बढ़ें") {
+        addButton("OK / Continue") {
             checkLoginStatus()
         }
 
@@ -204,6 +277,7 @@ class MainActivity : Activity() {
     }
 
     private fun checkLoginStatus() {
+
         val user = auth.currentUser
 
         if (user != null) {
@@ -214,6 +288,7 @@ class MainActivity : Activity() {
     }
 
     private fun showSignUp() {
+
         createRoot()
 
         addTitle("Create Account")
@@ -223,19 +298,15 @@ class MainActivity : Activity() {
         val emailInput = addInput("Email Address")
         val phoneInput = addInput("Phone Number")
 
-        val passwordInput = addInput(
-            "Create Password",
-            true
-        )
+        val passwordInput =
+            addInput("Create Password", true)
 
-        val confirmInput = addInput(
-            "Confirm Password",
-            true
-        )
+        val confirmInput =
+            addInput("Confirm Password", true)
 
         addStatus()
 
-        addButton("Create Account / अकाउंट बनाएँ") {
+        addButton("Create Account") {
 
             val name = nameInput.text.toString().trim()
             val email = emailInput.text.toString().trim()
@@ -257,12 +328,16 @@ class MainActivity : Activity() {
             }
 
             if (password.length < 6) {
-                showStatus("Password कम से कम 6 अक्षरों का होना चाहिए।")
+                showStatus(
+                    "Password कम से कम 6 अक्षरों का होना चाहिए।"
+                )
                 return@addButton
             }
 
             if (password != confirm) {
-                showStatus("दोनों Password एक जैसे नहीं हैं।")
+                showStatus(
+                    "दोनों Password एक जैसे नहीं हैं।"
+                )
                 return@addButton
             }
 
@@ -277,9 +352,10 @@ class MainActivity : Activity() {
 
                     val user = auth.currentUser
 
-                    val profile = UserProfileChangeRequest.Builder()
-                        .setDisplayName(name)
-                        .build()
+                    val profile =
+                        UserProfileChangeRequest.Builder()
+                            .setDisplayName(name)
+                            .build()
 
                     user?.updateProfile(profile)
                         ?.addOnCompleteListener {
@@ -290,23 +366,16 @@ class MainActivity : Activity() {
                                 .putString("name_$uid", name)
                                 .putString("phone_$uid", phone)
                                 .putBoolean("setup_$uid", false)
+                                .putBoolean("face_$uid", false)
                                 .apply()
 
                             auth.signOut()
 
-                            AlertDialog.Builder(this)
-                                .setTitle("Account Created")
-                                .setMessage(
-                                    "आपका अकाउंट बन गया है। " +
-                                    "अब Email और Password से Sign In करें।"
-                                )
-                                .setPositiveButton("Sign In") { _, _ ->
-                                    showSignIn()
-                                }
-                                .show()
+                            showSignIn()
                         }
 
                 } else {
+
                     showStatus(
                         task.exception?.localizedMessage
                             ?: "Account नहीं बन पाया।"
@@ -319,35 +388,34 @@ class MainActivity : Activity() {
             showSignIn()
         }
 
-        addButton("Skip / बिना अकाउंट जारी रखें") {
-            showSkipWarning()
-        }
-
         setContentView(makeScrollable(root))
     }
 
     private fun showSignIn() {
+
         createRoot()
 
         addTitle("GUARDIX LOGIN")
         addText("Email और Password से Sign In करें")
 
         val emailInput = addInput("Email Address")
-        val passwordInput = addInput(
-            "Password",
-            true
-        )
+
+        val passwordInput =
+            addInput("Password", true)
 
         addStatus()
 
-        addButton("Sign In / लॉगिन") {
+        addButton("Sign In") {
 
             val email = emailInput.text.toString().trim()
             val password = passwordInput.text.toString()
 
             hideKeyboard()
 
-            if (email.isEmpty() || password.isEmpty()) {
+            if (
+                email.isEmpty() ||
+                password.isEmpty()
+            ) {
                 showStatus("Email और Password भरें।")
                 return@addButton
             }
@@ -360,6 +428,7 @@ class MainActivity : Activity() {
             ).addOnCompleteListener { task ->
 
                 if (task.isSuccessful) {
+
                     val user = auth.currentUser
 
                     if (user != null) {
@@ -367,6 +436,7 @@ class MainActivity : Activity() {
                     }
 
                 } else {
+
                     showStatus(
                         task.exception?.localizedMessage
                             ?: "Login असफल हुआ।"
@@ -383,14 +453,11 @@ class MainActivity : Activity() {
             showSignUp()
         }
 
-        addButton("Skip / बिना अकाउंट जारी रखें") {
-            showSkipWarning()
-        }
-
         setContentView(makeScrollable(root))
     }
 
     private fun showForgotPassword() {
+
         createRoot()
 
         addTitle("Forgot Password")
@@ -402,7 +469,8 @@ class MainActivity : Activity() {
 
         addButton("Send Reset Link") {
 
-            val email = emailInput.text.toString().trim()
+            val email =
+                emailInput.text.toString().trim()
 
             if (email.isEmpty()) {
                 showStatus("Email Address भरें।")
@@ -415,10 +483,13 @@ class MainActivity : Activity() {
                 .addOnCompleteListener { task ->
 
                     if (task.isSuccessful) {
+
                         showStatus(
                             "Password reset link आपके Email पर भेज दिया गया है।"
                         )
+
                     } else {
+
                         showStatus(
                             task.exception?.localizedMessage
                                 ?: "Reset link नहीं भेजा जा सका।"
@@ -434,115 +505,274 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    private fun showSkipWarning() {
-
-        val message = if (isHindi) {
-            """
-            बिना अकाउंट जारी रखने पर:
-
-            • आप ऐप को स्थानीय रूप से इस्तेमाल कर सकते हैं।
-            • Cloud Backup उपलब्ध नहीं होगा।
-            • ऐप का डेटा साफ करने या ऐप हटाने पर
-              स्थानीय डेटा हमेशा के लिए खो सकता है।
-            • Skip करने से अभी कोई डेटा डिलीट नहीं होगा।
-
-            सुरक्षा और डेटा रिकवरी के लिए अकाउंट बनाना बेहतर है।
-
-            क्या आप फिर भी जारी रखना चाहते हैं?
-            """.trimIndent()
-        } else {
-            """
-            If you continue without an account:
-
-            • You can use the app locally.
-            • Cloud backup will not be available.
-            • Clearing app data or uninstalling the app
-              may permanently delete local data.
-            • Choosing Skip will NOT delete your data now.
-
-            Creating an account is recommended for recovery.
-
-            Do you still want to continue?
-            """.trimIndent()
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("Important Warning / जरूरी सूचना")
-            .setMessage(message)
-            .setNegativeButton("Go Back") { _, _ ->
-                showSignIn()
-            }
-            .setPositiveButton("Continue") { _, _ ->
-                showLocalDashboard()
-            }
-            .show()
-    }
+    // SECURITY SETUP
 
     private fun checkSecuritySetup(uid: String) {
+
+        currentUid = uid
 
         val completed = prefs.getBoolean(
             "setup_$uid",
             false
         )
 
-        if (completed) {
-            showDashboard()
+        val faceRegistered = prefs.getBoolean(
+            "face_$uid",
+            false
+        )
+
+        if (completed && faceRegistered) {
+            showPinEntry()
         } else {
-            showSecuritySetup(uid)
+            showPinSetup()
         }
     }
 
-    private fun showSecuritySetup(uid: String) {
+    private fun showPinSetup() {
+
         createRoot()
 
-        addTitle("SECURITY SETUP")
+        addTitle("CREATE SECURITY PIN")
 
         addText(
-            "Welcome to Guardix!\n\n" +
-            "आपका पहला लॉगिन सफल रहा है।\n" +
-            "अब Security Setup पूरा करें।"
+            "अपना 4 से 8 अंकों का Security PIN बनाएँ।"
         )
 
-        addButton("Continue Setup / सेटअप शुरू करें") {
+        val pinInput = addInput(
+            "Enter New PIN",
+            true
+        )
 
-            AlertDialog.Builder(this)
-                .setTitle("Security Setup")
-                .setMessage(
-                    "अगले चरण में PIN, Pattern या Password " +
-                    "चुनने और सेट करने की सुविधा जोड़ी जाएगी।"
+        val confirmInput = addInput(
+            "Confirm New PIN",
+            true
+        )
+
+        addStatus()
+
+        addButton("Save PIN & Continue") {
+
+            val pin = pinInput.text.toString()
+            val confirm = confirmInput.text.toString()
+
+            hideKeyboard()
+
+            if (
+                pin.length !in 4..8 ||
+                !pin.all { it.isDigit() }
+            ) {
+                showStatus(
+                    "PIN में 4 से 8 अंक होने चाहिए।"
                 )
-                .setPositiveButton("Continue") { _, _ ->
+                return@addButton
+            }
 
-                    prefs.edit()
-                        .putBoolean("setup_$uid", true)
-                        .apply()
+            if (pin != confirm) {
+                showStatus("दोनों PIN एक जैसे नहीं हैं।")
+                return@addButton
+            }
 
-                    showDashboard()
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
+            showStatus("PIN सुरक्षित किया जा रहा है...")
+
+            try {
+
+                val salt = ByteArray(16)
+                SecureRandom().nextBytes(salt)
+
+                val hash = hashPin(pin, salt)
+
+                prefs.edit()
+                    .putString(
+                        "pin_salt_$currentUid",
+                        Base64.encodeToString(
+                            salt,
+                            Base64.NO_WRAP
+                        )
+                    )
+                    .putString(
+                        "pin_hash_$currentUid",
+                        Base64.encodeToString(
+                            hash,
+                            Base64.NO_WRAP
+                        )
+                    )
+                    .apply()
+
+                startFaceRegistration()
+
+            } catch (e: Exception) {
+
+                showStatus(
+                    "PIN सुरक्षित नहीं हो पाया। दोबारा प्रयास करें।"
+                )
+            }
         }
 
-        setContentView(root)
+        setContentView(makeScrollable(root))
     }
 
-    private fun showDashboard() {
-        createRoot()
+    private fun hashPin(
+        pin: String,
+        salt: ByteArray
+    ): ByteArray {
 
-        addText("🛡️", 60f)
-        addTitle("GUARDIX")
-
-        val userName = auth.currentUser?.displayName
-            ?: "User"
-
-        addText("Welcome, $userName!", 20f)
-        addText("SMART SECURITY", 15f)
-
-        addText(
-            "आपका Guardix अकाउंट सफलतापूर्वक लॉगिन हो गया है।"
+        val spec = PBEKeySpec(
+            pin.toCharArray(),
+            salt,
+            120000,
+            256
         )
 
-        addButton("Sign Out / लॉगआउट") {
+        val factory = SecretKeyFactory.getInstance(
+            "PBKDF2WithHmacSHA1"
+        )
+
+        return factory.generateSecret(spec).encoded
+    }
+
+    private fun verifyPin(pin: String): Boolean {
+
+        return try {
+
+            val saltString = prefs.getString(
+                "pin_salt_$currentUid",
+                null
+            ) ?: return false
+
+            val hashString = prefs.getString(
+                "pin_hash_$currentUid",
+                null
+            ) ?: return false
+
+            val salt = Base64.decode(
+                saltString,
+                Base64.NO_WRAP
+            )
+
+            val savedHash = Base64.decode(
+                hashString,
+                Base64.NO_WRAP
+            )
+
+            val enteredHash = hashPin(pin, salt)
+
+            MessageDigest.isEqual(
+                savedHash,
+                enteredHash
+            )
+
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun showPinEntry() {
+
+        createRoot()
+
+        addTitle("GUARDIX SECURITY")
+
+        addText("अपना Security PIN डालें।")
+
+        val pinInput = addInput(
+            "Enter Security PIN",
+            true
+        )
+
+        addStatus()
+
+        addButton("Verify PIN") {
+
+            val pin = pinInput.text.toString()
+
+            hideKeyboard()
+
+            if (pin.isEmpty()) {
+                showStatus("PIN डालें।")
+                return@addButton
+            }
+
+            if (verifyPin(pin)) {
+
+                startFaceVerification()
+
+            } else {
+
+                pinInput.text.clear()
+
+                showStatus(
+                    "गलत PIN! दोबारा प्रयास करें।"
+                )
+            }
+        }
+
+        addButton("Sign Out") {
+            auth.signOut()
+            showSignIn()
+        }
+
+        setContentView(makeScrollable(root))
+    }
+
+    // FACE REGISTRATION AND VERIFICATION
+
+    private fun startFaceRegistration() {
+
+        cameraMode = "registration"
+
+        faceStep = 0
+        eyesOpened = false
+        eyesClosed = false
+
+        requestCameraPermission()
+    }
+
+    private fun startFaceVerification() {
+
+        cameraMode = "verification"
+
+        faceStep = 0
+        eyesOpened = false
+        eyesClosed = false
+
+        requestCameraPermission()
+    }
+
+    private fun requestCameraPermission() {
+
+        if (
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+
+            startFaceCamera()
+
+        } else {
+
+            cameraPermissionLauncher.launch(
+                Manifest.permission.CAMERA
+            )
+        }
+    }
+
+    private fun showCameraPermissionError() {
+
+        createRoot()
+
+        addTitle("CAMERA PERMISSION REQUIRED")
+
+        addText(
+            "Guardix Security के लिए Front Camera Permission जरूरी है।\n\n" +
+            "Camera Permission के बिना Verification पूरा नहीं हो सकता।"
+        )
+
+        addButton("Try Again") {
+            requestCameraPermission()
+        }
+
+        addButton("Sign Out") {
             auth.signOut()
             showSignIn()
         }
@@ -550,34 +780,54 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    private fun showLocalDashboard() {
+    private fun startFaceCamera() {
+
         createRoot()
 
-        addText("🛡️", 60f)
-        addTitle("GUARDIX")
-
-        addText("Local Mode / बिना अकाउंट")
-
-        addText(
-            "आप Guardix को स्थानीय रूप से इस्तेमाल कर रहे हैं।"
+        addTitle(
+            if (cameraMode == "registration") {
+                "FACE REGISTRATION"
+            } else {
+                "FACE VERIFICATION"
+            }
         )
 
-        addButton("Create Account") {
-            showSignUp()
+        val instruction = TextView(this).apply {
+            text = "कैमरे के सामने अपना चेहरा रखें।"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
         }
 
-        addButton("Sign In") {
-            showSignIn()
+        root.addView(instruction)
+
+        cameraStatus = TextView(this).apply {
+            text = "Camera शुरू हो रहा है..."
+            textSize = 16f
+            setTextColor(cyanColor)
+            gravity = Gravity.CENTER
+            setPadding(8, 15, 8, 15)
         }
+
+        root.addView(cameraStatus)
+
+        cameraPreview = PreviewView(this).apply {
+            scaleType =
+                PreviewView.ScaleType.FILL_CENTER
+        }
+
+        root.addView(
+            cameraPreview,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                480
+            )
+        )
 
         setContentView(root)
-    }
 
-    private fun makeScrollable(view: View): ScrollView {
-        return ScrollView(this).apply {
-            setBackgroundColor(bgColor)
-            isFillViewport = true
-            addView(view)
-        }
-    }
-}
+        val options =
+            FaceDetectorOptions.Builder()
+                .setPerformanceMode(
+                    FaceDetectorOptions.PERFORMANCE_MODE_FAST
+        
