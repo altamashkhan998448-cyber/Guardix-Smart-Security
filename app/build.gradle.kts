@@ -42,6 +42,9 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-auth")
 
+    // AndroidX Activity
+    implementation("androidx.activity:activity-ktx:1.10.1")
+
     // CameraX - Front Camera
     implementation("androidx.camera:camera-core:1.4.2")
     implementation("androidx.camera:camera-camera2:1.4.2")
