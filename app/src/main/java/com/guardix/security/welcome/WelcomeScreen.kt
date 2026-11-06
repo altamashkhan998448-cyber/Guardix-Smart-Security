@@ -10,7 +10,7 @@ import android.widget.TextView
 
 object WelcomeScreen {
 
-    private val backgroundColor = Color.rgb(10, 16, 35)
+    private const val BACKGROUND_COLOR = 0xFF0A1023.toInt()
 
     fun create(context: Context): ScrollView {
 
@@ -18,7 +18,7 @@ object WelcomeScreen {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(24, 25, 24, 25)
-            setBackgroundColor(backgroundColor)
+            setBackgroundColor(BACKGROUND_COLOR)
         }
 
         val logo = TextView(context).apply {
@@ -27,7 +27,13 @@ object WelcomeScreen {
             gravity = Gravity.CENTER
         }
 
-        root.addView(logo)
+        root.addView(
+            logo,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         val title = TextView(context).apply {
             text = "GUARDIX"
@@ -43,37 +49,40 @@ object WelcomeScreen {
         val subtitle = TextView(context).apply {
             text = "SMART SECURITY"
             textSize = 17f
+            typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.CYAN)
             gravity = Gravity.CENTER
         }
 
         root.addView(subtitle)
 
-        val information = """
-            CREATED BY
+        val creatorInfo = TextView(context).apply {
+            text = """
+                CREATED BY
 
-            Name: Altamash Khan
-            Age: 14 Years
-            Class: 6th
-            Address: Bahraich, Uttar Pradesh, India
+                Altamash Khan
 
-            Our goal is to make
-            mobile security smarter.
-        """.trimIndent()
+                Age: 14 Years
+                Class: 6th
 
-        val infoText = TextView(context).apply {
-            text = information
+                Bahraich,
+                Uttar Pradesh, India
+
+                Making Mobile Security Smarter.
+            """.trimIndent()
+
             textSize = 17f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(8, 25, 8, 25)
+            setLineSpacing(8f, 1f)
+            setPadding(8, 30, 8, 25)
         }
 
-        root.addView(infoText)
+        root.addView(creatorInfo)
 
         return ScrollView(context).apply {
             isFillViewport = true
-            setBackgroundColor(backgroundColor)
+            setBackgroundColor(BACKGROUND_COLOR)
             addView(root)
         }
     }
