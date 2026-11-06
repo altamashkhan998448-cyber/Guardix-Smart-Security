@@ -8,16 +8,17 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.text.InputType
+import android.util.Base64
+import android.util.Size
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import android.util.Size
-import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -36,10 +37,10 @@ import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
-import android.util.Base64
-import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ComponentActivity() {
 
@@ -53,26 +54,24 @@ class MainActivity : ComponentActivity() {
     private val bgColor = Color.rgb(10, 16, 35)
     private val cyanColor = Color.CYAN
 
-    private var cameraProvider: ProcessCameraProvider? = null
-    private var faceDetector: FaceDetector? = null
-    private var cameraPreview: PreviewView? = null
-    private var cameraStatus: TextView? = null
-
-    private val processing =
-        AtomicBoolean(false)
-
     private var currentUid = ""
     private var cameraMode = "registration"
 
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var faceDetector: FaceDetector? = null
+    private var cameraStatus: TextView? = null
+    private var previewView: PreviewView? = null
+
     private var faceStep = 0
-    private var eyesOpened = false
     private var eyesClosed = false
+
+    private val processing = AtomicBoolean(false)
+    private val cameraExecutor = Executors.newSingleThreadExecutor()
 
     private val cameraPermissionLauncher =
         registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
-
             if (granted) {
                 startFaceCamera()
             } else {
@@ -94,7 +93,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun createRoot() {
-
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -104,7 +102,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun addTitle(text: String) {
-
         val title = TextView(this).apply {
             this.text = text
             textSize = 29f
@@ -113,15 +110,10 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setPadding(0, 15, 0, 15)
         }
-
         root.addView(title)
     }
 
-    private fun addText(
-        text: String,
-        size: Float = 16f
-    ) {
-
+    private fun addText(text: String, size: Float = 16f) {
         val view = TextView(this).apply {
             this.text = text
             textSize = size
@@ -129,21 +121,14 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setPadding(8, 12, 8, 12)
         }
-
         root.addView(view)
     }
 
-    private fun addButton(
-        text: String,
-        action: () -> Unit
-    ) {
-
+    private fun addButton(text: String, action: () -> Unit) {
         val button = Button(this).apply {
             this.text = text
             isAllCaps = false
-            setOnClickListener {
-                action()
-            }
+            setOnClickListener { action() }
         }
 
         root.addView(
@@ -161,20 +146,16 @@ class MainActivity : ComponentActivity() {
         hint: String,
         password: Boolean = false
     ): EditText {
-
         val input = EditText(this).apply {
-
             this.hint = hint
             textSize = 16f
-
             setTextColor(Color.WHITE)
             setHintTextColor(Color.LTGRAY)
-
             setSingleLine(true)
 
             inputType = if (password) {
-                InputType.TYPE_CLASS_NUMBER or
-                    InputType.TYPE_NUMBER_VARIATION_PASSWORD
+                InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD
             } else {
                 InputType.TYPE_CLASS_TEXT
             }
@@ -196,7 +177,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun addStatus() {
-
         statusText = TextView(this).apply {
             text = ""
             textSize = 14f
@@ -204,7 +184,6 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setPadding(8, 12, 8, 12)
         }
-
         root.addView(statusText)
     }
 
@@ -213,28 +192,31 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hideKeyboard() {
+        val manager = getSystemService(
+            Context.INPUT_METHOD_SERVICE
+        ) as InputMethodManager
 
-        val manager =
-            getSystemService(
-                Context.INPUT_METHOD_SERVICE
-            ) as InputMethodManager
-
-        manager.hideSoftInputFromWindow(
-            root.windowToken,
-            0
-        )
+        manager.hideSoftInputFromWindow(root.windowToken, 0)
     }
 
-    private fun showWelcome() {
+    private fun scroll(view: View): ScrollView {
+        return ScrollView(this).apply {
+            setBackgroundColor(bgColor)
+            isFillViewport = true
+            addView(view)
+        }
+    }
 
+    // WELCOME SCREEN
+
+    private fun showWelcome() {
         createRoot()
 
         addText("🛡️", 65f)
         addTitle("GUARDIX")
-        addText("SMART SECURITY", 15f)
+        addText("SMART SECURITY")
 
         val info = if (isHindi) {
-
             """
             ऐप निर्माता
 
@@ -246,9 +228,7 @@ class MainActivity : ComponentActivity() {
             इस ऐप को बनाने का उद्देश्य
             मोबाइल सुरक्षा को बेहतर बनाना है।
             """.trimIndent()
-
         } else {
-
             """
             CREATED BY
 
@@ -273,11 +253,10 @@ class MainActivity : ComponentActivity() {
             checkLoginStatus()
         }
 
-        setContentView(root)
+        setContentView(scroll(root))
     }
 
     private fun checkLoginStatus() {
-
         val user = auth.currentUser
 
         if (user != null) {
@@ -287,27 +266,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun showSignUp() {
+    // SIGN UP
 
+    private fun showSignUp() {
         createRoot()
 
-        addTitle("Create Account")
+        addTitle("CREATE ACCOUNT")
         addText("अपना नया Guardix अकाउंट बनाएँ")
 
         val nameInput = addInput("Full Name")
         val emailInput = addInput("Email Address")
         val phoneInput = addInput("Phone Number")
-
-        val passwordInput =
-            addInput("Create Password", true)
-
-        val confirmInput =
-            addInput("Confirm Password", true)
+        val passwordInput = addInput("Create Password", true)
+        val confirmInput = addInput("Confirm Password", true)
 
         addStatus()
 
         addButton("Create Account") {
-
             val name = nameInput.text.toString().trim()
             val email = emailInput.text.toString().trim()
             val phone = phoneInput.text.toString().trim()
@@ -328,16 +303,12 @@ class MainActivity : ComponentActivity() {
             }
 
             if (password.length < 6) {
-                showStatus(
-                    "Password कम से कम 6 अक्षरों का होना चाहिए।"
-                )
+                showStatus("Password कम से कम 6 अक्षरों का होना चाहिए।")
                 return@addButton
             }
 
             if (password != confirm) {
-                showStatus(
-                    "दोनों Password एक जैसे नहीं हैं।"
-                )
+                showStatus("दोनों Password एक जैसे नहीं हैं।")
                 return@addButton
             }
 
@@ -349,16 +320,24 @@ class MainActivity : ComponentActivity() {
             ).addOnCompleteListener { task ->
 
                 if (task.isSuccessful) {
-
                     val user = auth.currentUser
 
-                    val profile =
-                        UserProfileChangeRequest.Builder()
-                            .setDisplayName(name)
-                            .build()
+                    if (user == null) {
+                        showStatus("Account बनाया गया, लेकिन User नहीं मिला।")
+                        return@addOnCompleteListener
+                    }
 
-                    user?.updateProfile(profile)
-                        ?.addOnCompleteListener {
+                    val profile = UserProfileChangeRequest.Builder()
+                        .setDisplayName(name)
+                        .build()
+
+                    user.updateProfile(profile)
+                        .addOnCompleteListener { profileTask ->
+
+                            if (!profileTask.isSuccessful) {
+                                showStatus("Profile सेव नहीं हो पाया।")
+                                return@addOnCompleteListener
+                            }
 
                             val uid = user.uid
 
@@ -371,11 +350,15 @@ class MainActivity : ComponentActivity() {
 
                             auth.signOut()
 
+                            Toast.makeText(
+                                this,
+                                "Account Created Successfully",
+                                Toast.LENGTH_LONG
+                            ).show()
+
                             showSignIn()
                         }
-
                 } else {
-
                     showStatus(
                         task.exception?.localizedMessage
                             ?: "Account नहीं बन पाया।"
@@ -388,34 +371,29 @@ class MainActivity : ComponentActivity() {
             showSignIn()
         }
 
-        setContentView(makeScrollable(root))
+        setContentView(scroll(root))
     }
 
-    private fun showSignIn() {
+    // SIGN IN
 
+    private fun showSignIn() {
         createRoot()
 
         addTitle("GUARDIX LOGIN")
         addText("Email और Password से Sign In करें")
 
         val emailInput = addInput("Email Address")
-
-        val passwordInput =
-            addInput("Password", true)
+        val passwordInput = addInput("Password", true)
 
         addStatus()
 
         addButton("Sign In") {
-
             val email = emailInput.text.toString().trim()
             val password = passwordInput.text.toString()
 
             hideKeyboard()
 
-            if (
-                email.isEmpty() ||
-                password.isEmpty()
-            ) {
+            if (email.isEmpty() || password.isEmpty()) {
                 showStatus("Email और Password भरें।")
                 return@addButton
             }
@@ -428,15 +406,14 @@ class MainActivity : ComponentActivity() {
             ).addOnCompleteListener { task ->
 
                 if (task.isSuccessful) {
-
                     val user = auth.currentUser
 
                     if (user != null) {
                         checkSecuritySetup(user.uid)
+                    } else {
+                        showStatus("User नहीं मिला।")
                     }
-
                 } else {
-
                     showStatus(
                         task.exception?.localizedMessage
                             ?: "Login असफल हुआ।"
@@ -453,14 +430,15 @@ class MainActivity : ComponentActivity() {
             showSignUp()
         }
 
-        setContentView(makeScrollable(root))
+        setContentView(scroll(root))
     }
 
-    private fun showForgotPassword() {
+    // FORGOT PASSWORD
 
+    private fun showForgotPassword() {
         createRoot()
 
-        addTitle("Forgot Password")
+        addTitle("FORGOT PASSWORD")
         addText("अपना अकाउंट वाला Email डालें।")
 
         val emailInput = addInput("Email Address")
@@ -468,9 +446,7 @@ class MainActivity : ComponentActivity() {
         addStatus()
 
         addButton("Send Reset Link") {
-
-            val email =
-                emailInput.text.toString().trim()
+            val email = emailInput.text.toString().trim()
 
             if (email.isEmpty()) {
                 showStatus("Email Address भरें।")
@@ -483,13 +459,10 @@ class MainActivity : ComponentActivity() {
                 .addOnCompleteListener { task ->
 
                     if (task.isSuccessful) {
-
                         showStatus(
                             "Password reset link आपके Email पर भेज दिया गया है।"
                         )
-
                     } else {
-
                         showStatus(
                             task.exception?.localizedMessage
                                 ?: "Reset link नहीं भेजा जा सका।"
@@ -502,24 +475,16 @@ class MainActivity : ComponentActivity() {
             showSignIn()
         }
 
-        setContentView(root)
+        setContentView(scroll(root))
     }
 
     // SECURITY SETUP
 
     private fun checkSecuritySetup(uid: String) {
-
         currentUid = uid
 
-        val completed = prefs.getBoolean(
-            "setup_$uid",
-            false
-        )
-
-        val faceRegistered = prefs.getBoolean(
-            "face_$uid",
-            false
-        )
+        val completed = prefs.getBoolean("setup_$uid", false)
+        val faceRegistered = prefs.getBoolean("face_$uid", false)
 
         if (completed && faceRegistered) {
             showPinEntry()
@@ -529,29 +494,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showPinSetup() {
-
         createRoot()
 
         addTitle("CREATE SECURITY PIN")
+        addText("अपना 4 से 8 अंकों का Security PIN बनाएँ।")
 
-        addText(
-            "अपना 4 से 8 अंकों का Security PIN बनाएँ।"
-        )
-
-        val pinInput = addInput(
-            "Enter New PIN",
-            true
-        )
-
-        val confirmInput = addInput(
-            "Confirm New PIN",
-            true
-        )
+        val pinInput = addInput("Enter New PIN", true)
+        val confirmInput = addInput("Confirm New PIN", true)
 
         addStatus()
 
         addButton("Save PIN & Continue") {
-
             val pin = pinInput.text.toString()
             val confirm = confirmInput.text.toString()
 
@@ -561,9 +514,7 @@ class MainActivity : ComponentActivity() {
                 pin.length !in 4..8 ||
                 !pin.all { it.isDigit() }
             ) {
-                showStatus(
-                    "PIN में 4 से 8 अंक होने चाहिए।"
-                )
+                showStatus("PIN में 4 से 8 अंक होने चाहिए।")
                 return@addButton
             }
 
@@ -572,10 +523,7 @@ class MainActivity : ComponentActivity() {
                 return@addButton
             }
 
-            showStatus("PIN सुरक्षित किया जा रहा है...")
-
             try {
-
                 val salt = ByteArray(16)
                 SecureRandom().nextBytes(salt)
 
@@ -584,38 +532,25 @@ class MainActivity : ComponentActivity() {
                 prefs.edit()
                     .putString(
                         "pin_salt_$currentUid",
-                        Base64.encodeToString(
-                            salt,
-                            Base64.NO_WRAP
-                        )
+                        Base64.encodeToString(salt, Base64.NO_WRAP)
                     )
                     .putString(
                         "pin_hash_$currentUid",
-                        Base64.encodeToString(
-                            hash,
-                            Base64.NO_WRAP
-                        )
+                        Base64.encodeToString(hash, Base64.NO_WRAP)
                     )
                     .apply()
 
                 startFaceRegistration()
 
             } catch (e: Exception) {
-
-                showStatus(
-                    "PIN सुरक्षित नहीं हो पाया। दोबारा प्रयास करें।"
-                )
+                showStatus("PIN सुरक्षित नहीं हो पाया।")
             }
         }
 
-        setContentView(makeScrollable(root))
+        setContentView(scroll(root))
     }
 
-    private fun hashPin(
-        pin: String,
-        salt: ByteArray
-    ): ByteArray {
-
+    private fun hashPin(pin: String, salt: ByteArray): ByteArray {
         val spec = PBEKeySpec(
             pin.toCharArray(),
             salt,
@@ -623,17 +558,14 @@ class MainActivity : ComponentActivity() {
             256
         )
 
-        val factory = SecretKeyFactory.getInstance(
-            "PBKDF2WithHmacSHA1"
-        )
-
-        return factory.generateSecret(spec).encoded
+        return SecretKeyFactory
+            .getInstance("PBKDF2WithHmacSHA1")
+            .generateSecret(spec)
+            .encoded
     }
 
     private fun verifyPin(pin: String): Boolean {
-
         return try {
-
             val saltString = prefs.getString(
                 "pin_salt_$currentUid",
                 null
@@ -656,33 +588,26 @@ class MainActivity : ComponentActivity() {
 
             val enteredHash = hashPin(pin, salt)
 
-            MessageDigest.isEqual(
-                savedHash,
-                enteredHash
-            )
+            MessageDigest.isEqual(savedHash, enteredHash)
 
         } catch (e: Exception) {
             false
         }
     }
 
-    private fun showPinEntry() {
+    // PIN ENTRY
 
+    private fun showPinEntry() {
         createRoot()
 
         addTitle("GUARDIX SECURITY")
-
         addText("अपना Security PIN डालें।")
 
-        val pinInput = addInput(
-            "Enter Security PIN",
-            true
-        )
+        val pinInput = addInput("Enter Security PIN", true)
 
         addStatus()
 
         addButton("Verify PIN") {
-
             val pin = pinInput.text.toString()
 
             hideKeyboard()
@@ -693,16 +618,10 @@ class MainActivity : ComponentActivity() {
             }
 
             if (verifyPin(pin)) {
-
                 startFaceVerification()
-
             } else {
-
                 pinInput.text.clear()
-
-                showStatus(
-                    "गलत PIN! दोबारा प्रयास करें।"
-                )
+                showStatus("गलत PIN! दोबारा प्रयास करें।")
             }
         }
 
@@ -711,46 +630,34 @@ class MainActivity : ComponentActivity() {
             showSignIn()
         }
 
-        setContentView(makeScrollable(root))
+        setContentView(scroll(root))
     }
 
-    // FACE REGISTRATION AND VERIFICATION
+    // FACE CAMERA
 
     private fun startFaceRegistration() {
-
         cameraMode = "registration"
-
         faceStep = 0
-        eyesOpened = false
         eyesClosed = false
-
         requestCameraPermission()
     }
 
     private fun startFaceVerification() {
-
         cameraMode = "verification"
-
         faceStep = 0
-        eyesOpened = false
         eyesClosed = false
-
         requestCameraPermission()
     }
 
     private fun requestCameraPermission() {
-
         if (
             ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.CAMERA
             ) == PackageManager.PERMISSION_GRANTED
         ) {
-
             startFaceCamera()
-
         } else {
-
             cameraPermissionLauncher.launch(
                 Manifest.permission.CAMERA
             )
@@ -758,14 +665,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showCameraPermissionError() {
-
         createRoot()
 
         addTitle("CAMERA PERMISSION REQUIRED")
 
         addText(
-            "Guardix Security के लिए Front Camera Permission जरूरी है।\n\n" +
-            "Camera Permission के बिना Verification पूरा नहीं हो सकता।"
+            "Guardix Security के लिए Front Camera Permission जरूरी है।"
         )
 
         addButton("Try Again") {
@@ -777,11 +682,10 @@ class MainActivity : ComponentActivity() {
             showSignIn()
         }
 
-        setContentView(root)
+        setContentView(scroll(root))
     }
 
     private fun startFaceCamera() {
-
         createRoot()
 
         addTitle(
@@ -792,14 +696,7 @@ class MainActivity : ComponentActivity() {
             }
         )
 
-        val instruction = TextView(this).apply {
-            text = "कैमरे के सामने अपना चेहरा रखें।"
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-        }
-
-        root.addView(instruction)
+        addText("कैमरे के सामने अपना चेहरा रखें।")
 
         cameraStatus = TextView(this).apply {
             text = "Camera शुरू हो रहा है..."
@@ -811,23 +708,34 @@ class MainActivity : ComponentActivity() {
 
         root.addView(cameraStatus)
 
-        cameraPreview = PreviewView(this).apply {
-            scaleType =
-                PreviewView.ScaleType.FILL_CENTER
+        previewView = PreviewView(this).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
         }
 
         root.addView(
-            cameraPreview,
+            previewView,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 480
             )
         )
 
-        setContentView(root)
+        setContentView(scroll(root))
 
-        val options =
-            FaceDetectorOptions.Builder()
-                .setPerformanceMode(
-                    FaceDetectorOptions.PERFORMANCE_MODE_FAST
-        
+        val options = FaceDetectorOptions.Builder()
+            .setPerformanceMode(
+                FaceDetectorOptions.PERFORMANCE_MODE_FAST
+            )
+            .setClassificationMode(
+                FaceDetectorOptions.CLASSIFICATION_MODE_ALL
+            )
+            .build()
+
+        faceDetector = FaceDetection.getClient(options)
+
+        val future = ProcessCameraProvider.getInstance(this)
+
+        future.addListener({
+
+            try {
+            
