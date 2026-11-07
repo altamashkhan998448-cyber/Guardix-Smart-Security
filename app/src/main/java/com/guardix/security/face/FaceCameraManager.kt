@@ -1,8 +1,15 @@
 package com.guardix.security.face
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Matrix
+import android.graphics.Rect
+import android.graphics.YuvImage
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -13,6 +20,8 @@ import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -29,6 +38,12 @@ class FaceCameraManager(
         fun onFaceNotDetected()
         fun onStatusChanged(status: String)
         fun onLivenessCompleted()
+
+        // पुराने callback को भी support करता है।
+        fun onLivenessCompleted(faceBitmap: Bitmap) {
+            onLivenessCompleted()
+        }
+
         fun onError(message: String)
     }
 
@@ -47,7 +62,10 @@ class FaceCameraManager(
 
     private val isProcessing = AtomicBoolean(false)
 
+    @Volatile
     private var isStarted = false
+
+    @Volatile
     private var isShutdown = false
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -86,14 +104,12 @@ class FaceCameraManager(
             try {
 
                 val provider = cameraProviderFuture.get()
-
                 cameraProvider = provider
 
                 val preview = Preview.Builder()
                     .build()
                     .also {
-                        it.surfaceProvider =
-                            previewView.surfaceProvider
+                        it.surfaceProvider = previewView.surfaceProvider
                     }
 
                 val imageAnalysis =
@@ -124,17 +140,16 @@ class FaceCameraManager(
 
                     try {
 
-                        val inputImage =
-                            InputImage.fromMediaImage(
-                                mediaImage,
-                                imageProxy.imageInfo.rotationDegrees
-                            )
+                        val inputImage = InputImage.fromMediaImage(
+                            mediaImage,
+                            imageProxy.imageInfo.rotationDegrees
+                        )
 
                         faceDetector.process(inputImage)
                             .addOnSuccessListener { faces ->
 
                                 if (!isShutdown && isStarted) {
-                                    processFaces(faces)
+                                    processFaces(faces, imageProxy)
                                 }
                             }
                             .addOnFailureListener { error ->
@@ -190,14 +205,16 @@ class FaceCameraManager(
         }, ContextCompat.getMainExecutor(context))
     }
 
-    private fun processFaces(faces: List<Face>) {
+    private fun processFaces(
+        faces: List<Face>,
+        imageProxy: ImageProxy
+    ) {
 
         if (faces.isEmpty()) {
 
             eyesClosed = false
 
             listener.onFaceNotDetected()
-
             listener.onStatusChanged(
                 "No face detected. Please show your face."
             )
@@ -205,10 +222,15 @@ class FaceCameraManager(
             return
         }
 
-        val face = faces.maxByOrNull {
-            it.boundingBox.width() *
-                it.boundingBox.height()
-        } ?: return
+        // एक से अधिक चेहरे हों तो Registration रोकें।
+        if (faces.size > 1) {
+            listener.onStatusChanged(
+                "Only one face should be visible."
+            )
+            return
+        }
+
+        val face = faces.firstOrNull() ?: return
 
         listener.onFaceDetected()
 
@@ -232,7 +254,7 @@ class FaceCameraManager(
             }
 
             Step.WAITING_FOR_RIGHT -> {
-                checkRightTurn(face)
+                checkRightTurn(face, imageProxy)
             }
 
             Step.COMPLETED -> Unit
@@ -247,10 +269,7 @@ class FaceCameraManager(
         val rightEye =
             face.rightEyeOpenProbability ?: return
 
-        if (
-            leftEye < 0.30f &&
-            rightEye < 0.30f
-        ) {
+        if (leftEye < 0.30f && rightEye < 0.30f) {
             eyesClosed = true
         }
 
@@ -292,17 +311,224 @@ class FaceCameraManager(
         }
     }
 
-    private fun checkRightTurn(face: Face) {
+    private fun checkRightTurn(
+        face: Face,
+        imageProxy: ImageProxy
+    ) {
 
         if (face.headEulerAngleY > 15f) {
+
+            listener.onStatusChanged(
+                "Capturing your face..."
+            )
+
+            val faceBitmap = createFaceBitmap(
+                imageProxy,
+                face.boundingBox
+            )
+
+            if (faceBitmap == null) {
+
+                listener.onStatusChanged(
+                    "Face capture failed. Please try again."
+                )
+
+                currentStep = Step.WAITING_FOR_FACE
+                blinkCount = 0
+                eyesClosed = false
+
+                return
+            }
 
             currentStep = Step.COMPLETED
 
             listener.onStatusChanged(
-                "Liveness verification completed."
+                "Face movement verification completed."
             )
 
-            listener.onLivenessCompleted()
+            // अब Registration को चेहरे की Bitmap भी मिलेगी।
+            listener.onLivenessCompleted(faceBitmap)
+        }
+    }
+
+    private fun createFaceBitmap(
+        imageProxy: ImageProxy,
+        faceBox: Rect
+    ): Bitmap? {
+
+        return try {
+
+            val width = imageProxy.width
+            val height = imageProxy.height
+
+            if (
+                imageProxy.format != ImageFormat.YUV_420_888 ||
+                width % 2 != 0 ||
+                height % 2 != 0
+            ) {
+                return null
+            }
+
+            val planes = imageProxy.planes
+
+            if (planes.size < 3) return null
+
+            val yPlane = planes[0]
+            val uPlane = planes[1]
+            val vPlane = planes[2]
+
+            val yBuffer = yPlane.buffer.duplicate()
+            val uBuffer = uPlane.buffer.duplicate()
+            val vBuffer = vPlane.buffer.duplicate()
+
+            val yBase = yBuffer.position()
+            val uBase = uBuffer.position()
+            val vBase = vBuffer.position()
+
+            val nv21 = ByteArray(width * height * 3 / 2)
+
+            // Y plane
+            for (row in 0 until height) {
+                for (col in 0 until width) {
+
+                    val index =
+                        yBase +
+                            row * yPlane.rowStride +
+                            col * yPlane.pixelStride
+
+                    nv21[row * width + col] =
+                        yBuffer.get(index)
+                }
+            }
+
+            // Interleave V and U planes for NV21.
+            val ySize = width * height
+
+            for (row in 0 until height / 2) {
+                for (col in 0 until width / 2) {
+
+                    val vIndex =
+                        vBase +
+                            row * vPlane.rowStride +
+                            col * vPlane.pixelStride
+
+                    val uIndex =
+                        uBase +
+                            row * uPlane.rowStride +
+                            col * uPlane.pixelStride
+
+                    val outputIndex =
+                        ySize + row * width + col * 2
+
+                    nv21[outputIndex] = vBuffer.get(vIndex)
+                    nv21[outputIndex + 1] = uBuffer.get(uIndex)
+                }
+            }
+
+            val output = ByteArrayOutputStream()
+
+            val converted = YuvImage(
+                nv21,
+                ImageFormat.NV21,
+                width,
+                height,
+                null
+            ).compressToJpeg(
+                Rect(0, 0, width, height),
+                90,
+                output
+            )
+
+            if (!converted) return null
+
+            val bytes = output.toByteArray()
+
+            val originalBitmap =
+                BitmapFactory.decodeByteArray(
+                    bytes,
+                    0,
+                    bytes.size
+                ) ?: return null
+
+            val rotation =
+                imageProxy.imageInfo.rotationDegrees
+
+            val rotatedBitmap =
+                if (rotation != 0) {
+
+                    val matrix = Matrix().apply {
+                        postRotate(rotation.toFloat())
+                    }
+
+                    Bitmap.createBitmap(
+                        originalBitmap,
+                        0,
+                        0,
+                        originalBitmap.width,
+                        originalBitmap.height,
+                        matrix,
+                        true
+                    )
+
+                } else {
+                    originalBitmap
+                }
+
+            // ML Kit bounding box is applied to the rotated image.
+            val left = faceBox.left.coerceIn(
+                0,
+                rotatedBitmap.width - 1
+            )
+
+            val top = faceBox.top.coerceIn(
+                0,
+                rotatedBitmap.height - 1
+            )
+
+            val right = faceBox.right.coerceIn(
+                left + 1,
+                rotatedBitmap.width
+            )
+
+            val bottom = faceBox.bottom.coerceIn(
+                top + 1,
+                rotatedBitmap.height
+            )
+
+            val marginX =
+                ((right - left) * 0.15f).toInt()
+
+            val marginY =
+                ((bottom - top) * 0.15f).toInt()
+
+            val cropRect = Rect(
+                (left - marginX).coerceAtLeast(0),
+                (top - marginY).coerceAtLeast(0),
+                (right + marginX).coerceAtMost(
+                    rotatedBitmap.width
+                ),
+                (bottom + marginY).coerceAtMost(
+                    rotatedBitmap.height
+                )
+            )
+
+            if (
+                cropRect.width() < 20 ||
+                cropRect.height() < 20
+            ) {
+                return null
+            }
+
+            Bitmap.createBitmap(
+                rotatedBitmap,
+                cropRect.left,
+                cropRect.top,
+                cropRect.width(),
+                cropRect.height()
+            )
+
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -315,8 +541,6 @@ class FaceCameraManager(
             cameraProvider?.unbindAll()
         } catch (_: Exception) {
         }
-
-        isProcessing.set(false)
     }
 
     @Synchronized
