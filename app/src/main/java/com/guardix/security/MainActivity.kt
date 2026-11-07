@@ -2,15 +2,16 @@ package com.guardix.security
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import com.google.firebase.auth.FirebaseAuth
+
+import com.guardix.security.account.AccountManager
 import com.guardix.security.auth.SignInScreen
 import com.guardix.security.auth.SignUpScreen
-import com.guardix.security.auth.ForgotPasswordScreen
 import com.guardix.security.dashboard.DashboardScreen
 import com.guardix.security.face.FaceRegistration
 import com.guardix.security.face.FaceVerification
@@ -49,7 +50,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         showWelcome()
-
         handler.postDelayed(welcomeDelay, 3000)
     }
 
@@ -59,9 +59,12 @@ class MainActivity : ComponentActivity() {
 
     private fun checkAuthentication() {
 
-        val user = FirebaseAuth.getInstance().currentUser
+        if (AppPreferences.isDemoMode(this)) {
+            showDashboard()
+            return
+        }
 
-        if (user == null) {
+        if (!AccountManager.isSignedIn(this)) {
             showSignIn()
             return
         }
@@ -78,6 +81,8 @@ class MainActivity : ComponentActivity() {
         activeFaceStop?.invoke()
         activeFaceStop = null
 
+        AppPreferences.setDemoMode(this, false)
+
         setContentView(
             SignInScreen.create(
                 this,
@@ -87,8 +92,9 @@ class MainActivity : ComponentActivity() {
                 {
                     showSignUp()
                 },
+                {},
                 {
-                    showForgotPassword()
+                    showDemoWarning()
                 }
             )
         )
@@ -104,27 +110,42 @@ class MainActivity : ComponentActivity() {
                 },
                 {
                     showSignIn()
+                },
+                {
+                    showDemoWarning()
                 }
             )
         )
     }
 
-    private fun showForgotPassword() {
+    private fun showDemoWarning() {
 
-        setContentView(
-            ForgotPasswordScreen.create(
-                this
-            ) {
-                showSignIn()
+        AlertDialog.Builder(this)
+            .setTitle("Skip Account Setup?")
+            .setMessage(
+                "You are entering Demo Mode without creating an account.\n\n" +
+                "Your demo PIN and face setup will remain on this device only. " +
+                "If app data is cleared or the app is uninstalled, " +
+                "your demo data may be permanently lost.\n\n" +
+                "Create an account later to use account-based backup " +
+                "when that feature becomes available."
+            )
+            .setPositiveButton("OK") { _, _ ->
+
+                AccountManager.signOut(this)
+                AppPreferences.setDemoMode(this, true)
+
+                showDashboard()
             }
-        )
+            .setNegativeButton("CANCEL", null)
+            .setCancelable(false)
+            .show()
     }
 
     private fun showPinSetup() {
 
         setContentView(
             PinSetupScreen.create(this) {
-
                 startFaceRegistration()
             }
         )
@@ -155,8 +176,10 @@ class MainActivity : ComponentActivity() {
             this,
             this
         ) {
+
             AppPreferences.setFaceRegistered(this, true)
             AppPreferences.setSetupComplete(this, true)
+
             activeFaceStop = null
             showDashboard()
         }
@@ -178,6 +201,7 @@ class MainActivity : ComponentActivity() {
             this,
             this
         ) {
+
             activeFaceStop = null
             showDashboard()
         }
@@ -199,7 +223,7 @@ class MainActivity : ComponentActivity() {
 
         if (
             checkSelfPermission(Manifest.permission.CAMERA) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
+            PackageManager.PERMISSION_GRANTED
         ) {
             startAction()
         } else {
@@ -216,8 +240,7 @@ class MainActivity : ComponentActivity() {
         AlertDialog.Builder(this)
             .setTitle("Camera Permission Required")
             .setMessage(
-                "Guardix needs camera permission for face movement checks. " +
-                "Without permission, you cannot continue to the Dashboard."
+                "Guardix needs camera permission for face setup and verification."
             )
             .setPositiveButton("Try Again") { _, _ ->
 
@@ -233,8 +256,8 @@ class MainActivity : ComponentActivity() {
                     showCameraSettingsDialog()
                 }
             }
-            .setNegativeButton("Sign Out") { _, _ ->
-                signOut()
+            .setNegativeButton("Back to Dashboard") { _, _ ->
+                showDashboard()
             }
             .setCancelable(false)
             .show()
@@ -243,7 +266,7 @@ class MainActivity : ComponentActivity() {
     private fun showCameraSettingsDialog() {
 
         AlertDialog.Builder(this)
-            .setTitle("Permission Needed")
+            .setTitle("Camera Permission Needed")
             .setMessage(
                 "Please enable Camera permission from Android App Settings."
             )
@@ -257,9 +280,23 @@ class MainActivity : ComponentActivity() {
         activeFaceStop = null
 
         setContentView(
-            DashboardScreen.create(this) {
-                signOut()
-            }
+            DashboardScreen.create(
+                this,
+                onSetupSecurity = {
+                    showPinSetup()
+                },
+                onFaceSecurity = {
+
+                    if (AppPreferences.isFaceRegistered(this)) {
+                        startFaceVerification()
+                    } else {
+                        startFaceRegistration()
+                    }
+                },
+                onSignOut = {
+                    signOut()
+                }
+            )
         )
     }
 
@@ -268,12 +305,19 @@ class MainActivity : ComponentActivity() {
         activeFaceStop?.invoke()
         activeFaceStop = null
 
-        FirebaseAuth.getInstance().signOut()
+        pendingCameraStart = null
+
+        if (AppPreferences.isDemoMode(this)) {
+            AppPreferences.setDemoMode(this, false)
+        } else {
+            AccountManager.signOut(this)
+        }
 
         showSignIn()
     }
 
     override fun onDestroy() {
+
         handler.removeCallbacks(welcomeDelay)
 
         activeFaceStop?.invoke()
