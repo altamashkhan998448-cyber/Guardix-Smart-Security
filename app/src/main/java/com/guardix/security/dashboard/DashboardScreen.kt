@@ -15,6 +15,8 @@ object DashboardScreen {
 
     fun create(
         context: Context,
+        onSetupSecurity: () -> Unit = {},
+        onFaceSecurity: () -> Unit = {},
         onSignOut: () -> Unit
     ): View {
 
@@ -24,87 +26,60 @@ object DashboardScreen {
             setBackgroundColor(BACKGROUND)
         }
 
-        val title = TextView(context).apply {
-            text = "🛡️ GUARDIX"
-            textSize = 30f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(0, 15, 0, 10)
+        fun addText(text: String, size: Float, color: Int) {
+            root.addView(TextView(context).apply {
+                this.text = text
+                textSize = size
+                setTextColor(color)
+                gravity = Gravity.CENTER
+                setPadding(0, 12, 0, 12)
+            })
         }
 
-        root.addView(title)
+        addText("🛡️ GUARDIX", 30f, Color.CYAN)
+        addText("SMART SECURITY DASHBOARD", 15f, Color.WHITE)
+        addText("Welcome to Guardix!", 23f, Color.WHITE)
 
-        val subtitle = TextView(context).apply {
-            text = "SMART SECURITY DASHBOARD"
-            textSize = 15f
-            setTextColor(Color.CYAN)
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 30)
+        addButton(
+            root,
+            "🔐  SET UP SECURITY",
+            "Create or update your Security PIN",
+            Color.rgb(20, 115, 190)
+        ) {
+            onSetupSecurity()
         }
 
-        root.addView(subtitle)
-
-        val welcome = TextView(context).apply {
-            text = "Welcome to Guardix!"
-            textSize = 23f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(0, 15, 0, 25)
+        addButton(
+            root,
+            "👤  FACE SECURITY",
+            "Set up or verify your face",
+            Color.rgb(30, 90, 145)
+        ) {
+            onFaceSecurity()
         }
 
-        root.addView(welcome)
-
-        addFeature(
-            context,
+        addButton(
             root,
-            "🔐  PIN Security",
-            "Your PIN security setup"
-        )
+            "📱  DEVICE SECURITY",
+            "Device security dashboard",
+            Color.rgb(24, 35, 62)
+        ) { }
 
-        addFeature(
-            context,
+        addButton(
             root,
-            "👤  Face Security",
-            "Face movement verification"
-        )
+            "⚙️  SETTINGS",
+            "Manage your app settings",
+            Color.rgb(24, 35, 62)
+        ) { }
 
-        addFeature(
-            context,
+        addButton(
             root,
-            "📱  Device Security",
-            "Device security dashboard"
-        )
-
-        addFeature(
-            context,
-            root,
-            "⚙️  Settings",
-            "Manage your app settings"
-        )
-
-        val signOut = TextView(context).apply {
-            text = "SIGN OUT"
-            textSize = 17f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(20, 18, 20, 18)
-            setBackgroundColor(Color.rgb(180, 40, 50))
-            setOnClickListener {
-                onSignOut()
-            }
+            "SIGN OUT",
+            "Exit your current session",
+            Color.rgb(180, 40, 50)
+        ) {
+            onSignOut()
         }
-
-        val buttonParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        )
-
-        buttonParams.setMargins(0, 30, 0, 15)
-
-        root.addView(signOut, buttonParams)
 
         return ScrollView(context).apply {
             isFillViewport = true
@@ -112,35 +87,36 @@ object DashboardScreen {
         }
     }
 
-    private fun addFeature(
-        context: Context,
+    private fun addButton(
         parent: LinearLayout,
         heading: String,
-        description: String
+        description: String,
+        background: Int,
+        action: () -> Unit
     ) {
 
-        val card = LinearLayout(context).apply {
+        val card = LinearLayout(parent.context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(18, 18, 18, 18)
-            setBackgroundColor(Color.rgb(24, 35, 62))
+            setBackgroundColor(background)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { action() }
         }
 
-        val title = TextView(context).apply {
+        card.addView(TextView(parent.context).apply {
             text = heading
-            textSize = 19f
+            textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
-        }
+        })
 
-        val detail = TextView(context).apply {
+        card.addView(TextView(parent.context).apply {
             text = description
             textSize = 14f
             setTextColor(Color.LTGRAY)
             setPadding(0, 8, 0, 0)
-        }
-
-        card.addView(title)
-        card.addView(detail)
+        })
 
         val params = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -148,7 +124,6 @@ object DashboardScreen {
         )
 
         params.setMargins(0, 0, 0, 15)
-
         parent.addView(card, params)
     }
 }
