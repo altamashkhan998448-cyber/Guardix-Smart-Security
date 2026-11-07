@@ -21,7 +21,6 @@ import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -39,10 +38,11 @@ class FaceCameraManager(
         fun onStatusChanged(status: String)
         fun onLivenessCompleted()
 
-        // पुराने callback को भी support करता है।
         fun onLivenessCompleted(faceBitmap: Bitmap) {
             onLivenessCompleted()
         }
+
+        fun onProgressChanged(progress: Int, message: String) {}
 
         fun onError(message: String)
     }
@@ -94,16 +94,15 @@ class FaceCameraManager(
 
         isStarted = true
 
-        val cameraProviderFuture =
-            ProcessCameraProvider.getInstance(context)
+        val future = ProcessCameraProvider.getInstance(context)
 
-        cameraProviderFuture.addListener({
+        future.addListener({
 
             if (isShutdown) return@addListener
 
             try {
 
-                val provider = cameraProviderFuture.get()
+                val provider = future.get()
                 cameraProvider = provider
 
                 val preview = Preview.Builder()
@@ -112,14 +111,13 @@ class FaceCameraManager(
                         it.surfaceProvider = previewView.surfaceProvider
                     }
 
-                val imageAnalysis =
-                    ImageAnalysis.Builder()
-                        .setBackpressureStrategy(
-                            ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
-                        )
-                        .build()
+                val analysis = ImageAnalysis.Builder()
+                    .setBackpressureStrategy(
+                        ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
+                    )
+                    .build()
 
-                imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                analysis.setAnalyzer(cameraExecutor) { imageProxy ->
 
                     if (
                         isShutdown ||
@@ -140,12 +138,12 @@ class FaceCameraManager(
 
                     try {
 
-                        val inputImage = InputImage.fromMediaImage(
+                        val input = InputImage.fromMediaImage(
                             mediaImage,
                             imageProxy.imageInfo.rotationDegrees
                         )
 
-                        faceDetector.process(inputImage)
+                        faceDetector.process(input)
                             .addOnSuccessListener { faces ->
 
                                 if (!isShutdown && isStarted) {
@@ -162,7 +160,6 @@ class FaceCameraManager(
                                 }
                             }
                             .addOnCompleteListener {
-
                                 isProcessing.set(false)
                                 imageProxy.close()
                             }
@@ -185,7 +182,7 @@ class FaceCameraManager(
                     lifecycleOwner,
                     CameraSelector.DEFAULT_FRONT_CAMERA,
                     preview,
-                    imageAnalysis
+                    analysis
                 )
 
                 listener.onStatusChanged(
@@ -197,8 +194,7 @@ class FaceCameraManager(
                 isStarted = false
 
                 listener.onError(
-                    e.localizedMessage
-                        ?: "Unable to start camera"
+                    e.localizedMessage ?: "Unable to start camera"
                 )
             }
 
@@ -216,13 +212,12 @@ class FaceCameraManager(
 
             listener.onFaceNotDetected()
             listener.onStatusChanged(
-                "No face detected. Please show your face."
+                "Please show your face."
             )
 
             return
         }
 
-        // एक से अधिक चेहरे हों तो Registration रोकें।
         if (faces.size > 1) {
             listener.onStatusChanged(
                 "Only one face should be visible."
@@ -230,7 +225,7 @@ class FaceCameraManager(
             return
         }
 
-        val face = faces.firstOrNull() ?: return
+        val face = faces.first()
 
         listener.onFaceDetected()
 
@@ -241,7 +236,7 @@ class FaceCameraManager(
                 currentStep = Step.WAITING_FOR_BLINK
 
                 listener.onStatusChanged(
-                    "Face detected. Please blink twice."
+                    "Face detected. Blink your eyes."
                 )
             }
 
@@ -263,11 +258,8 @@ class FaceCameraManager(
 
     private fun checkBlink(face: Face) {
 
-        val leftEye =
-            face.leftEyeOpenProbability ?: return
-
-        val rightEye =
-            face.rightEyeOpenProbability ?: return
+        val leftEye = face.leftEyeOpenProbability ?: return
+        val rightEye = face.rightEyeOpenProbability ?: return
 
         if (leftEye < 0.30f && rightEye < 0.30f) {
             eyesClosed = true
@@ -282,18 +274,22 @@ class FaceCameraManager(
             eyesClosed = false
             blinkCount++
 
-            if (blinkCount >= 2) {
+            val progress = blinkCount.coerceAtMost(2) * 25
 
-                currentStep = Step.WAITING_FOR_LEFT
+            if (blinkCount == 1) {
 
-                listener.onStatusChanged(
-                    "Two blinks detected. Turn your head left."
+                listener.onProgressChanged(
+                    25,
+                    "First blink completed. Blink again."
                 )
 
             } else {
 
-                listener.onStatusChanged(
-                    "First blink detected. Blink one more time."
+                currentStep = Step.WAITING_FOR_LEFT
+
+                listener.onProgressChanged(
+                    50,
+                    "Two blinks completed. Turn your head left."
                 )
             }
         }
@@ -305,8 +301,9 @@ class FaceCameraManager(
 
             currentStep = Step.WAITING_FOR_RIGHT
 
-            listener.onStatusChanged(
-                "Left turn detected. Now turn your head right."
+            listener.onProgressChanged(
+                75,
+                "Left turn completed. Turn your head right."
             )
         }
     }
@@ -319,35 +316,36 @@ class FaceCameraManager(
         if (face.headEulerAngleY > 15f) {
 
             listener.onStatusChanged(
-                "Capturing your face..."
+                "Capturing face..."
             )
 
-            val faceBitmap = createFaceBitmap(
+            val bitmap = createFaceBitmap(
                 imageProxy,
                 face.boundingBox
             )
 
-            if (faceBitmap == null) {
-
-                listener.onStatusChanged(
-                    "Face capture failed. Please try again."
-                )
+            if (bitmap == null) {
 
                 currentStep = Step.WAITING_FOR_FACE
                 blinkCount = 0
                 eyesClosed = false
+
+                listener.onProgressChanged(
+                    0,
+                    "Capture failed. Please try again."
+                )
 
                 return
             }
 
             currentStep = Step.COMPLETED
 
-            listener.onStatusChanged(
-                "Face movement verification completed."
+            listener.onProgressChanged(
+                100,
+                "Face movement completed."
             )
 
-            // अब Registration को चेहरे की Bitmap भी मिलेगी।
-            listener.onLivenessCompleted(faceBitmap)
+            listener.onLivenessCompleted(bitmap)
         }
     }
 
@@ -370,7 +368,6 @@ class FaceCameraManager(
             }
 
             val planes = imageProxy.planes
-
             if (planes.size < 3) return null
 
             val yPlane = planes[0]
@@ -381,27 +378,24 @@ class FaceCameraManager(
             val uBuffer = uPlane.buffer.duplicate()
             val vBuffer = vPlane.buffer.duplicate()
 
+            val nv21 = ByteArray(width * height * 3 / 2)
+
             val yBase = yBuffer.position()
             val uBase = uBuffer.position()
             val vBase = vBuffer.position()
 
-            val nv21 = ByteArray(width * height * 3 / 2)
-
-            // Y plane
             for (row in 0 until height) {
                 for (col in 0 until width) {
 
-                    val index =
-                        yBase +
-                            row * yPlane.rowStride +
-                            col * yPlane.pixelStride
-
                     nv21[row * width + col] =
-                        yBuffer.get(index)
+                        yBuffer.get(
+                            yBase +
+                                row * yPlane.rowStride +
+                                col * yPlane.pixelStride
+                        )
                 }
             }
 
-            // Interleave V and U planes for NV21.
             val ySize = width * height
 
             for (row in 0 until height / 2) {
@@ -417,15 +411,15 @@ class FaceCameraManager(
                             row * uPlane.rowStride +
                             col * uPlane.pixelStride
 
-                    val outputIndex =
+                    val index =
                         ySize + row * width + col * 2
 
-                    nv21[outputIndex] = vBuffer.get(vIndex)
-                    nv21[outputIndex + 1] = uBuffer.get(uIndex)
+                    nv21[index] = vBuffer.get(vIndex)
+                    nv21[index + 1] = uBuffer.get(uIndex)
                 }
             }
 
-            val output = ByteArrayOutputStream()
+            val stream = ByteArrayOutputStream()
 
             val converted = YuvImage(
                 nv21,
@@ -436,63 +430,58 @@ class FaceCameraManager(
             ).compressToJpeg(
                 Rect(0, 0, width, height),
                 90,
-                output
+                stream
             )
 
             if (!converted) return null
 
-            val bytes = output.toByteArray()
+            val bytes = stream.toByteArray()
 
-            val originalBitmap =
-                BitmapFactory.decodeByteArray(
-                    bytes,
-                    0,
-                    bytes.size
-                ) ?: return null
+            val original = BitmapFactory.decodeByteArray(
+                bytes,
+                0,
+                bytes.size
+            ) ?: return null
 
             val rotation =
                 imageProxy.imageInfo.rotationDegrees
 
-            val rotatedBitmap =
-                if (rotation != 0) {
+            val rotated = if (rotation != 0) {
 
-                    val matrix = Matrix().apply {
+                Bitmap.createBitmap(
+                    original,
+                    0,
+                    0,
+                    original.width,
+                    original.height,
+                    Matrix().apply {
                         postRotate(rotation.toFloat())
-                    }
+                    },
+                    true
+                )
 
-                    Bitmap.createBitmap(
-                        originalBitmap,
-                        0,
-                        0,
-                        originalBitmap.width,
-                        originalBitmap.height,
-                        matrix,
-                        true
-                    )
+            } else {
+                original
+            }
 
-                } else {
-                    originalBitmap
-                }
-
-            // ML Kit bounding box is applied to the rotated image.
             val left = faceBox.left.coerceIn(
                 0,
-                rotatedBitmap.width - 1
+                rotated.width - 1
             )
 
             val top = faceBox.top.coerceIn(
                 0,
-                rotatedBitmap.height - 1
+                rotated.height - 1
             )
 
             val right = faceBox.right.coerceIn(
                 left + 1,
-                rotatedBitmap.width
+                rotated.width
             )
 
             val bottom = faceBox.bottom.coerceIn(
                 top + 1,
-                rotatedBitmap.height
+                rotated.height
             )
 
             val marginX =
@@ -501,30 +490,26 @@ class FaceCameraManager(
             val marginY =
                 ((bottom - top) * 0.15f).toInt()
 
-            val cropRect = Rect(
+            val crop = Rect(
                 (left - marginX).coerceAtLeast(0),
                 (top - marginY).coerceAtLeast(0),
-                (right + marginX).coerceAtMost(
-                    rotatedBitmap.width
-                ),
-                (bottom + marginY).coerceAtMost(
-                    rotatedBitmap.height
-                )
+                (right + marginX).coerceAtMost(rotated.width),
+                (bottom + marginY).coerceAtMost(rotated.height)
             )
 
             if (
-                cropRect.width() < 20 ||
-                cropRect.height() < 20
+                crop.width() < 20 ||
+                crop.height() < 20
             ) {
                 return null
             }
 
             Bitmap.createBitmap(
-                rotatedBitmap,
-                cropRect.left,
-                cropRect.top,
-                cropRect.width(),
-                cropRect.height()
+                rotated,
+                crop.left,
+                crop.top,
+                crop.width(),
+                crop.height()
             )
 
         } catch (_: Exception) {
@@ -549,7 +534,6 @@ class FaceCameraManager(
         if (isShutdown) return
 
         stopCamera()
-
         isShutdown = true
 
         try {
