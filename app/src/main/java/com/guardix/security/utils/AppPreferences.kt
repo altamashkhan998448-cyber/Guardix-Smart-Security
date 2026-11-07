@@ -1,15 +1,12 @@
 package com.guardix.security.utils
 
 import android.content.Context
-import com.google.firebase.auth.FirebaseAuth
+import com.guardix.security.account.AccountManager
 
 object AppPreferences {
 
     private const val PREF_NAME = "GuardixAppPreferences"
-
-    private fun getUserKey(): String? {
-        return FirebaseAuth.getInstance().currentUser?.uid
-    }
+    private const val DEMO_KEY = "demo_mode"
 
     private fun getPreferences(context: Context) =
         context.getSharedPreferences(
@@ -17,51 +14,61 @@ object AppPreferences {
             Context.MODE_PRIVATE
         )
 
-    fun isSetupComplete(context: Context): Boolean {
-        val uid = getUserKey() ?: return false
-
-        return getPreferences(context)
-            .getBoolean("setup_complete_$uid", false)
+    fun setDemoMode(context: Context, enabled: Boolean) {
+        getPreferences(context).edit()
+            .putBoolean(DEMO_KEY, enabled)
+            .apply()
     }
 
-    fun setSetupComplete(
-        context: Context,
-        complete: Boolean
-    ) {
-        val uid = getUserKey() ?: return
+    fun isDemoMode(context: Context): Boolean {
+        return getPreferences(context)
+            .getBoolean(DEMO_KEY, false)
+    }
 
-        getPreferences(context)
-            .edit()
-            .putBoolean("setup_complete_$uid", complete)
+    private fun getUserKey(context: Context): String? {
+        if (isDemoMode(context)) return "demo"
+
+        return AccountManager.getCurrentEmail(context)
+            ?.replace(".", "_")
+            ?.replace("@", "_at_")
+    }
+
+    fun isSetupComplete(context: Context): Boolean {
+        val key = getUserKey(context) ?: return false
+
+        return getPreferences(context)
+            .getBoolean("setup_complete_$key", false)
+    }
+
+    fun setSetupComplete(context: Context, complete: Boolean) {
+        val key = getUserKey(context) ?: return
+
+        getPreferences(context).edit()
+            .putBoolean("setup_complete_$key", complete)
             .apply()
     }
 
     fun isFaceRegistered(context: Context): Boolean {
-        val uid = getUserKey() ?: return false
+        val key = getUserKey(context) ?: return false
 
         return getPreferences(context)
-            .getBoolean("face_registered_$uid", false)
+            .getBoolean("face_registered_$key", false)
     }
 
-    fun setFaceRegistered(
-        context: Context,
-        registered: Boolean
-    ) {
-        val uid = getUserKey() ?: return
+    fun setFaceRegistered(context: Context, registered: Boolean) {
+        val key = getUserKey(context) ?: return
 
-        getPreferences(context)
-            .edit()
-            .putBoolean("face_registered_$uid", registered)
+        getPreferences(context).edit()
+            .putBoolean("face_registered_$key", registered)
             .apply()
     }
 
     fun clearUserSetup(context: Context) {
-        val uid = getUserKey() ?: return
+        val key = getUserKey(context) ?: return
 
-        getPreferences(context)
-            .edit()
-            .remove("setup_complete_$uid")
-            .remove("face_registered_$uid")
+        getPreferences(context).edit()
+            .remove("setup_complete_$key")
+            .remove("face_registered_$key")
             .apply()
     }
 }
