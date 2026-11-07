@@ -3,224 +3,172 @@ package com.guardix.security.auth
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.text.InputFilter
 import android.text.InputType
 import android.view.Gravity
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import android.widget.Toast
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.UserProfileChangeRequest
+import android.widget.*
+import com.guardix.security.account.AccountManager
 
 object SignUpScreen {
 
     fun create(
         context: Context,
         onSignUpSuccess: () -> Unit,
-        onSignInClick: () -> Unit
+        onSignInClick: () -> Unit,
+        onSkip: () -> Unit = {}
     ): ScrollView {
-
-        val background = Color.rgb(10, 16, 35)
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(28, 30, 28, 30)
-            setBackgroundColor(background)
+            setPadding(25, 30, 25, 30)
+            setBackgroundColor(Color.rgb(10, 16, 35))
         }
 
-        fun addInput(
-            hintText: String,
-            inputTypeValue: Int
-        ): EditText {
+        fun addText(text: String, size: Float, color: Int) {
+            root.addView(TextView(context).apply {
+                this.text = text
+                textSize = size
+                setTextColor(color)
+                gravity = Gravity.CENTER
+                setPadding(0, 12, 0, 12)
+            })
+        }
 
-            val input = EditText(context).apply {
+        fun addField(hintText: String, type: Int): EditText {
+            val field = EditText(context).apply {
                 hint = hintText
-                inputType = inputTypeValue
-                textSize = 16f
+                inputType = type
                 setTextColor(Color.WHITE)
                 setHintTextColor(Color.LTGRAY)
+                textSize = 16f
                 setPadding(18, 12, 18, 12)
-                setBackgroundColor(Color.rgb(30, 40, 65))
+                setSingleLine(true)
+                setBackgroundColor(Color.rgb(30, 43, 70))
             }
 
-            root.addView(
-                input,
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    bottomMargin = 15
-                }
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
             )
+            params.setMargins(0, 8, 0, 8)
+            root.addView(field, params)
 
-            return input
+            return field
         }
 
-        val title = TextView(context).apply {
-            text = "CREATE ACCOUNT"
-            textSize = 27f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 25)
-        }
+        addText("🛡️ GUARDIX", 29f, Color.CYAN)
+        addText("CREATE YOUR ACCOUNT", 21f, Color.WHITE)
 
-        root.addView(title)
-
-        val nameInput = addInput(
+        val name = addField(
             "Full Name",
             InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_FLAG_CAP_WORDS
+                InputType.TYPE_TEXT_FLAG_CAP_WORDS
         )
 
-        val emailInput = addInput(
+        val email = addField(
             "Email Address",
             InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+                InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
         )
 
-        val phoneInput = addInput(
-            "Phone Number",
-            InputType.TYPE_CLASS_PHONE
+        val phone = addField(
+            "10 Digit Mobile Number",
+            InputType.TYPE_CLASS_NUMBER
         )
 
-        val passwordInput = addInput(
-            "Password",
+        phone.filters = arrayOf(InputFilter.LengthFilter(10))
+
+        val password = addField(
+            "Password (Minimum 8 Characters)",
             InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
         )
 
-        val confirmPasswordInput = addInput(
+        val confirmPassword = addField(
             "Confirm Password",
             InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
         )
 
-        val signUpButton = Button(context).apply {
-            text = "CREATE ACCOUNT"
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.rgb(35, 110, 230))
-        }
+        fun addButton(
+            label: String,
+            background: Int,
+            action: () -> Unit
+        ) {
+            val button = TextView(context).apply {
+                text = label
+                textSize = 17f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(15, 17, 15, 17)
+                setBackgroundColor(background)
+                setOnClickListener { action() }
+            }
 
-        root.addView(
-            signUpButton,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
             )
-        )
-
-        signUpButton.setOnClickListener {
-
-            val name = nameInput.text.toString().trim()
-            val email = emailInput.text.toString().trim()
-            val phone = phoneInput.text.toString().trim()
-            val password = passwordInput.text.toString()
-            val confirmPassword =
-                confirmPasswordInput.text.toString()
-
-            if (
-                name.isEmpty() ||
-                email.isEmpty() ||
-                phone.isEmpty() ||
-                password.isEmpty() ||
-                confirmPassword.isEmpty()
-            ) {
-                Toast.makeText(
-                    context,
-                    "Please fill all fields",
-                    Toast.LENGTH_SHORT
-                ).show()
-                return@setOnClickListener
-            }
-
-            if (password != confirmPassword) {
-                Toast.makeText(
-                    context,
-                    "Passwords do not match",
-                    Toast.LENGTH_SHORT
-                ).show()
-                return@setOnClickListener
-            }
-
-            if (password.length < 6) {
-                Toast.makeText(
-                    context,
-                    "Password must be at least 6 characters",
-                    Toast.LENGTH_SHORT
-                ).show()
-                return@setOnClickListener
-            }
-
-            signUpButton.isEnabled = false
-            signUpButton.text = "CREATING ACCOUNT..."
-
-            FirebaseAuth.getInstance()
-                .createUserWithEmailAndPassword(email, password)
-                .addOnCompleteListener { task ->
-
-                    if (task.isSuccessful) {
-
-                        val user = FirebaseAuth.getInstance().currentUser
-
-                        val profile = UserProfileChangeRequest.Builder()
-                            .setDisplayName(name)
-                            .build()
-
-                        user?.updateProfile(profile)
-                            ?.addOnCompleteListener {
-
-                                context.getSharedPreferences(
-                                    "GuardixUserData",
-                                    Context.MODE_PRIVATE
-                                ).edit()
-                                    .putString("phone", phone)
-                                    .apply()
-
-                                signUpButton.isEnabled = true
-                                signUpButton.text = "CREATE ACCOUNT"
-
-                                onSignUpSuccess()
-                            }
-
-                    } else {
-
-                        signUpButton.isEnabled = true
-                        signUpButton.text = "CREATE ACCOUNT"
-
-                        Toast.makeText(
-                            context,
-                            task.exception?.localizedMessage
-                                ?: "Account creation failed",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                }
+            params.setMargins(0, 10, 0, 5)
+            root.addView(button, params)
         }
 
-        val signInText = TextView(context).apply {
-            text = "Already have an account? Sign In"
-            textSize = 15f
-            setTextColor(Color.CYAN)
-            gravity = Gravity.CENTER
-            setPadding(10, 25, 10, 15)
+        addButton("CREATE ACCOUNT", Color.rgb(20, 115, 190)) {
+
+            val fullName = name.text.toString().trim()
+            val userEmail = email.text.toString().trim()
+            val mobile = phone.text.toString()
+            val pass = password.text.toString()
+            val confirm = confirmPassword.text.toString()
+
+            if (pass != confirm) {
+                Toast.makeText(
+                    context,
+                    "Passwords do not match.",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@addButton
+            }
+
+            val result = AccountManager.createAccount(
+                context,
+                fullName,
+                userEmail,
+                mobile,
+                pass
+            )
+
+            if (result == "SUCCESS") {
+                Toast.makeText(
+                    context,
+                    "Account created successfully!",
+                    Toast.LENGTH_SHORT
+                ).show()
+                onSignUpSuccess()
+            } else {
+                Toast.makeText(
+                    context,
+                    result,
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
 
-        root.addView(signInText)
-
-        signInText.setOnClickListener {
+        addButton("ALREADY HAVE AN ACCOUNT? SIGN IN", Color.DKGRAY) {
             onSignInClick()
+        }
+
+        addButton("SKIP FOR TESTING", Color.rgb(80, 65, 130)) {
+            onSkip()
         }
 
         return ScrollView(context).apply {
             isFillViewport = true
-            setBackgroundColor(background)
+            isVerticalScrollBarEnabled = true
             addView(root)
+            setBackgroundColor(Color.rgb(10, 16, 35))
         }
     }
 }
