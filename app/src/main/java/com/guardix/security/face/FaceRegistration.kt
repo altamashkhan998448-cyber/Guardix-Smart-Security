@@ -1,15 +1,21 @@
 package com.guardix.security.face
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
+import android.view.ViewOutlineProvider
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -27,87 +33,154 @@ class FaceRegistration(
 
     private lateinit var previewView: PreviewView
     private lateinit var statusText: TextView
-    private lateinit var cameraManager: FaceCameraManager
+    private lateinit var progressText: TextView
+    private lateinit var progressRing: CircularProgressView
 
-    private val mainHandler = Handler(Looper.getMainLooper())
-
-    private val registrationExecutor =
-        Executors.newSingleThreadExecutor()
-
-    private val isProcessing = AtomicBoolean(false)
-
-    @Volatile
+    private var cameraManager: FaceCameraManager? = null
     private var completed = false
-
-    @Volatile
     private var stopped = false
+
+    private val isSaving = AtomicBoolean(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val registrationExecutor = Executors.newSingleThreadExecutor()
 
     fun create(): View {
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(20, 25, 20, 25)
-            setBackgroundColor(Color.rgb(10, 16, 35))
+            setPadding(dp(20), dp(20), dp(20), dp(20))
+            setBackgroundColor(Color.rgb(8, 13, 28))
         }
 
         val title = TextView(context).apply {
             text = "FACE REGISTRATION"
-            textSize = 25f
-            typeface = Typeface.DEFAULT_BOLD
+            textSize = 23f
             setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 15)
         }
-
-        root.addView(title)
 
         val description = TextView(context).apply {
-            text = "Complete the following face verification steps."
-            textSize = 15f
+            text = "Keep your face inside the circle"
+            textSize = 14f
             setTextColor(Color.LTGRAY)
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 20)
-        }
-
-        root.addView(description)
-
-        previewView = PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
         }
 
         root.addView(
-            previewView,
+            title,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                320
+                dp(45)
+            )
+        )
+
+        root.addView(
+            description,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(35)
+            )
+        )
+
+        val cameraFrame = FrameLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                dp(300),
+                dp(300)
+            ).apply {
+                gravity = Gravity.CENTER
+                topMargin = dp(15)
+                bottomMargin = dp(15)
+            }
+        }
+
+        progressRing = CircularProgressView(context)
+
+        cameraFrame.addView(
+            progressRing,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        previewView = PreviewView(context).apply {
+
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.BLACK)
+            }
+
+            clipToOutline = true
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+        }
+
+        val previewParams = FrameLayout.LayoutParams(
+            dp(250),
+            dp(250),
+            Gravity.CENTER
+        )
+
+        cameraFrame.addView(previewView, previewParams)
+
+        root.addView(cameraFrame)
+
+        progressText = TextView(context).apply {
+            text = "0%"
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.CYAN)
+            gravity = Gravity.CENTER
+        }
+
+        root.addView(
+            progressText,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(40)
             )
         )
 
         statusText = TextView(context).apply {
-            text = "Camera is waiting to start."
-            textSize = 17f
-            setTextColor(Color.CYAN)
-            gravity = Gravity.CENTER
-            setPadding(10, 25, 10, 25)
-        }
-
-        root.addView(statusText)
-
-        val steps = TextView(context).apply {
-            text = """
-                STEP 1: Blink your eyes twice
-                STEP 2: Turn your head left
-                STEP 3: Turn your head right
-            """.trimIndent()
-
+            text = "Position your face inside the circle"
             textSize = 15f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setLineSpacing(8f, 1f)
         }
 
-        root.addView(steps)
+        root.addView(
+            statusText,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(55)
+            )
+        )
+
+        val instructions = TextView(context).apply {
+            text = """
+                1. Blink your eyes once
+                2. Blink your eyes again
+                3. Turn your head LEFT
+                4. Turn your head RIGHT
+
+                Face registration will complete automatically.
+            """.trimIndent()
+
+            textSize = 14f
+            setTextColor(Color.LTGRAY)
+            gravity = Gravity.CENTER
+        }
+
+        root.addView(
+            instructions,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(150)
+            )
+        )
 
         cameraManager = FaceCameraManager(
             context,
@@ -116,148 +189,146 @@ class FaceRegistration(
             object : FaceCameraManager.FaceListener {
 
                 override fun onFaceDetected() {
-                    updateStatus("Face detected.")
+                    mainHandler.post {
+                        if (!completed && !stopped) {
+                            statusText.text = "Face detected. Follow the instructions."
+                        }
+                    }
                 }
 
                 override fun onFaceNotDetected() {
-                    updateStatus("Please show your face.")
+                    mainHandler.post {
+                        if (!completed && !stopped) {
+                            statusText.text = "No face detected. Look at the camera."
+                        }
+                    }
                 }
 
                 override fun onStatusChanged(status: String) {
-                    updateStatus(status)
+                    mainHandler.post {
+                        if (!completed && !stopped) {
+                            statusText.text = status
+                        }
+                    }
                 }
 
-                // पुराने callback से Registration पूरा नहीं होगा।
-                override fun onLivenessCompleted() {
-                    updateStatus(
-                        "Face image is required. Please try again."
-                    )
-                }
-
-                // नया callback: कैमरे से मिली वास्तविक Face Bitmap।
-                override fun onLivenessCompleted(
-                    faceBitmap: Bitmap
+                override fun onProgressChanged(
+                    progress: Int,
+                    message: String
                 ) {
-                    processFaceRegistration(faceBitmap)
+                    mainHandler.post {
+                        if (!completed && !stopped) {
+                            progressRing.setProgressValue(progress)
+                            progressText.text = "$progress%"
+                            statusText.text = message
+                        }
+                    }
+                }
+
+                override fun onLivenessCompleted() {
+                    mainHandler.post {
+                        if (!completed && !stopped) {
+                            statusText.text =
+                                "Face detected. Preparing registration..."
+                        }
+                    }
+                }
+
+                override fun onLivenessCompleted(faceBitmap: android.graphics.Bitmap) {
+                    if (!isSaving.compareAndSet(false, true)) {
+                        faceBitmap.recycle()
+                        return
+                    }
+
+                    cameraManager?.stopCamera()
+
+                    mainHandler.post {
+                        progressRing.setProgressValue(100)
+                        progressText.text = "100%"
+                        statusText.text = "Saving your face identity..."
+                    }
+
+                    registrationExecutor.execute {
+
+                        var success = false
+
+                        try {
+                            val embedding = FaceRecognitionEngine(context).use {
+                                it.getFaceEmbedding(faceBitmap)
+                            }
+
+                            if (embedding != null && embedding.isNotEmpty()) {
+                                success = FaceStorage(context)
+                                    .saveFaceEmbedding(embedding)
+                            }
+
+                        } catch (e: Exception) {
+                            success = false
+                        } finally {
+                            if (!faceBitmap.isRecycled) {
+                                faceBitmap.recycle()
+                            }
+                        }
+
+                        mainHandler.post {
+
+                            if (stopped || completed) return@post
+
+                            if (success) {
+
+                                completed = true
+
+                                progressRing.setProgressValue(100)
+                                progressText.text = "100%"
+                                statusText.text =
+                                    "FACE REGISTERED SUCCESSFULLY"
+
+                                Toast.makeText(
+                                    context,
+                                    "Face registration successful!",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+
+                                mainHandler.postDelayed({
+                                    if (!stopped) {
+                                        onRegistrationComplete()
+                                    }
+                                }, 900)
+
+                            } else {
+
+                                isSaving.set(false)
+
+                                statusText.text =
+                                    "Face registration failed. Please try again."
+
+                                Toast.makeText(
+                                    context,
+                                    "Unable to save face. Please restart registration.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
                 }
 
                 override fun onError(message: String) {
-                    updateStatus(message)
+                    mainHandler.post {
+                        if (!completed && !stopped) {
+                            statusText.text = message
+
+                            Toast.makeText(
+                                context,
+                                message,
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
                 }
             }
         )
 
         return root
-    }
-
-    private fun processFaceRegistration(faceBitmap: Bitmap) {
-
-        if (completed || stopped) {
-            faceBitmap.recycle()
-            return
-        }
-
-        if (!isProcessing.compareAndSet(false, true)) {
-            faceBitmap.recycle()
-            return
-        }
-
-        updateStatus("Creating your face identity...")
-
-        try {
-
-            registrationExecutor.execute {
-
-                var success = false
-                var errorMessage = "Face registration failed."
-
-                try {
-
-                    // Generate face embedding.
-                    val embedding =
-                        FaceRecognitionEngine(context).use { engine ->
-                            engine.getFaceEmbedding(faceBitmap)
-                        }
-
-                    // Save encrypted embedding locally.
-                    val faceStorage = FaceStorage(context)
-
-                    success = faceStorage.saveFaceEmbedding(
-                        embedding
-                    )
-
-                    if (!success) {
-                        errorMessage =
-                            "Unable to securely save face data."
-                    }
-
-                } catch (e: Exception) {
-
-                    errorMessage =
-                        e.localizedMessage
-                            ?: "Face processing failed."
-                } finally {
-
-                    if (!faceBitmap.isRecycled) {
-                        faceBitmap.recycle()
-                    }
-                }
-
-                mainHandler.post {
-
-                    isProcessing.set(false)
-
-                    if (stopped || completed) return@post
-
-                    if (success) {
-
-                        completed = true
-
-                        statusText.text =
-                            "Face registered successfully!"
-
-                        Toast.makeText(
-                            context,
-                            "Face registration successful",
-                            Toast.LENGTH_LONG
-                        ).show()
-
-                        onRegistrationComplete()
-
-                    } else {
-
-                        statusText.text = errorMessage
-
-                        Toast.makeText(
-                            context,
-                            errorMessage,
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                }
-            }
-
-        } catch (e: Exception) {
-
-            isProcessing.set(false)
-
-            if (!faceBitmap.isRecycled) {
-                faceBitmap.recycle()
-            }
-
-            updateStatus(
-                e.localizedMessage ?: "Registration could not start."
-            )
-        }
-    }
-
-    private fun updateStatus(message: String) {
-
-        mainHandler.post {
-            if (!stopped && ::statusText.isInitialized) {
-                statusText.text = message
-            }
-        }
     }
 
     fun start() {
@@ -270,11 +341,15 @@ class FaceRegistration(
                 Manifest.permission.CAMERA
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            updateStatus("Camera permission is required.")
+            Toast.makeText(
+                context,
+                "Camera permission is required.",
+                Toast.LENGTH_LONG
+            ).show()
             return
         }
 
-        cameraManager.startCamera()
+        cameraManager?.startCamera()
     }
 
     fun stop() {
@@ -283,10 +358,88 @@ class FaceRegistration(
 
         stopped = true
 
-        if (::cameraManager.isInitialized) {
-            cameraManager.shutdown()
-        }
+        mainHandler.removeCallbacksAndMessages(null)
+
+        cameraManager?.shutdown()
+        cameraManager = null
 
         registrationExecutor.shutdownNow()
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * context.resources.displayMetrics.density).toInt()
+    }
+}
+
+private class CircularProgressView(context: Context) : View(context) {
+
+    private val density = context.resources.displayMetrics.density
+
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.DKGRAY
+        style = Paint.Style.STROKE
+        strokeWidth = 9f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.CYAN
+        style = Paint.Style.STROKE
+        strokeWidth = 9f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val circleRect = RectF()
+
+    private var currentProgress = 0f
+    private var animator: ValueAnimator? = null
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+
+        val inset = 15f * density
+
+        circleRect.set(
+            inset,
+            inset,
+            width - inset,
+            height - inset
+        )
+
+        canvas.drawArc(
+            circleRect,
+            0f,
+            360f,
+            false,
+            trackPaint
+        )
+
+        canvas.drawArc(
+            circleRect,
+            -90f,
+            360f * currentProgress / 100f,
+            false,
+            progressPaint
+        )
+    }
+
+    fun setProgressValue(progress: Int) {
+
+        animator?.cancel()
+
+        animator = ValueAnimator.ofFloat(
+            currentProgress,
+            progress.coerceIn(0, 100).toFloat()
+        ).apply {
+
+            duration = 450
+
+            addUpdateListener {
+                currentProgress = it.animatedValue as Float
+                invalidate()
+            }
+
+            start()
+        }
     }
 }
