@@ -76,10 +76,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun showSignIn() {
+    private fun stopActiveFaceScreen() {
 
         activeFaceStop?.invoke()
         activeFaceStop = null
+    }
+
+    private fun showSignIn() {
+
+        stopActiveFaceScreen()
+        pendingCameraStart = null
 
         AppPreferences.setDemoMode(this, false)
 
@@ -101,6 +107,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showSignUp() {
+
+        stopActiveFaceScreen()
+        pendingCameraStart = null
 
         setContentView(
             SignUpScreen.create(
@@ -144,6 +153,9 @@ class MainActivity : ComponentActivity() {
 
     private fun showPinSetup() {
 
+        stopActiveFaceScreen()
+        pendingCameraStart = null
+
         setContentView(
             PinSetupScreen.create(this) {
                 startFaceRegistration()
@@ -152,6 +164,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showPinEntry() {
+
+        stopActiveFaceScreen()
+        pendingCameraStart = null
 
         setContentView(
             PinEntryScreen.create(
@@ -172,15 +187,19 @@ class MainActivity : ComponentActivity() {
 
     private fun startFaceRegistration() {
 
+        stopActiveFaceScreen()
+
         val faceScreen = FaceRegistration(
             this,
             this
         ) {
 
+            // Stop camera before leaving Registration.
+            stopActiveFaceScreen()
+
             AppPreferences.setFaceRegistered(this, true)
             AppPreferences.setSetupComplete(this, true)
 
-            activeFaceStop = null
             showDashboard()
         }
 
@@ -197,12 +216,16 @@ class MainActivity : ComponentActivity() {
 
     private fun startFaceVerification() {
 
+        stopActiveFaceScreen()
+
         val faceScreen = FaceVerification(
             this,
             this
         ) {
 
-            activeFaceStop = null
+            // Stop camera before leaving Verification.
+            stopActiveFaceScreen()
+
             showDashboard()
         }
 
@@ -257,6 +280,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             .setNegativeButton("Back to Dashboard") { _, _ ->
+                pendingCameraStart = null
                 showDashboard()
             }
             .setCancelable(false)
@@ -276,8 +300,8 @@ class MainActivity : ComponentActivity() {
 
     private fun showDashboard() {
 
-        activeFaceStop?.invoke()
-        activeFaceStop = null
+        stopActiveFaceScreen()
+        pendingCameraStart = null
 
         setContentView(
             DashboardScreen.create(
@@ -302,9 +326,7 @@ class MainActivity : ComponentActivity() {
 
     private fun signOut() {
 
-        activeFaceStop?.invoke()
-        activeFaceStop = null
-
+        stopActiveFaceScreen()
         pendingCameraStart = null
 
         if (AppPreferences.isDemoMode(this)) {
@@ -320,8 +342,8 @@ class MainActivity : ComponentActivity() {
 
         handler.removeCallbacks(welcomeDelay)
 
-        activeFaceStop?.invoke()
-        activeFaceStop = null
+        pendingCameraStart = null
+        stopActiveFaceScreen()
 
         super.onDestroy()
     }
