@@ -1,3 +1,4 @@
+
 package com.guardix.security.auth
 
 import android.content.Context
@@ -5,14 +6,8 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.text.InputType
 import android.view.Gravity
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import android.widget.Toast
-import com.google.firebase.auth.FirebaseAuth
+import android.widget.*
+import com.guardix.security.account.AccountManager
 
 object SignInScreen {
 
@@ -20,167 +15,138 @@ object SignInScreen {
         context: Context,
         onSignInSuccess: () -> Unit,
         onSignUpClick: () -> Unit,
-        onForgotPasswordClick: () -> Unit
+        onForgotPasswordClick: () -> Unit,
+        onSkip: () -> Unit = {}
     ): ScrollView {
-
-        val backgroundColor = Color.rgb(10, 16, 35)
-        val blueColor = Color.rgb(35, 110, 230)
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(28, 35, 28, 35)
-            setBackgroundColor(backgroundColor)
+            setPadding(25, 30, 25, 30)
+            setBackgroundColor(Color.rgb(10, 16, 35))
         }
 
-        val title = TextView(context).apply {
-            text = "GUARDIX"
-            textSize = 34f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
+        fun addText(text: String, size: Float, color: Int) {
+            root.addView(TextView(context).apply {
+                this.text = text
+                textSize = size
+                setTextColor(color)
+                gravity = Gravity.CENTER
+                setPadding(0, 12, 0, 12)
+            })
         }
 
-        root.addView(title)
-
-        val subtitle = TextView(context).apply {
-            text = "Welcome Back"
-            textSize = 22f
-            setTextColor(Color.CYAN)
-            gravity = Gravity.CENTER
-            setPadding(0, 12, 0, 30)
-        }
-
-        root.addView(subtitle)
-
-        val emailInput = EditText(context).apply {
-            hint = "Email Address"
-            textSize = 16f
-            setSingleLine(true)
-            inputType = InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.LTGRAY)
-            setPadding(18, 15, 18, 15)
-            setBackgroundColor(Color.rgb(30, 40, 65))
-        }
-
-        root.addView(
-            emailInput,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = 18
+        fun addField(hintText: String, type: Int): EditText {
+            val field = EditText(context).apply {
+                hint = hintText
+                inputType = type
+                setTextColor(Color.WHITE)
+                setHintTextColor(Color.LTGRAY)
+                textSize = 16f
+                setPadding(18, 12, 18, 12)
+                setSingleLine(true)
+                setBackgroundColor(Color.rgb(30, 43, 70))
             }
-        )
 
-        val passwordInput = EditText(context).apply {
-            hint = "Password"
-            textSize = 16f
-            setSingleLine(true)
-            inputType = InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.LTGRAY)
-            setPadding(18, 15, 18, 15)
-            setBackgroundColor(Color.rgb(30, 40, 65))
-        }
-
-        root.addView(
-            passwordInput,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = 22
-            }
-        )
-
-        val signInButton = Button(context).apply {
-            text = "SIGN IN"
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(blueColor)
-        }
-
-        root.addView(
-            signInButton,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
             )
+            params.setMargins(0, 8, 0, 8)
+            root.addView(field, params)
+
+            return field
+        }
+
+        fun addButton(
+            label: String,
+            background: Int,
+            action: () -> Unit
+        ) {
+            val button = TextView(context).apply {
+                text = label
+                textSize = 16f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(15, 17, 15, 17)
+                setBackgroundColor(background)
+                setOnClickListener { action() }
+            }
+
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            params.setMargins(0, 10, 0, 5)
+            root.addView(button, params)
+        }
+
+        addText("🛡️ GUARDIX", 30f, Color.CYAN)
+        addText("SIGN IN TO YOUR ACCOUNT", 20f, Color.WHITE)
+
+        val email = addField(
+            "Email Address",
+            InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
         )
 
-        signInButton.setOnClickListener {
+        val password = addField(
+            "Password",
+            InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
+        )
 
-            val email = emailInput.text.toString().trim()
-            val password = passwordInput.text.toString()
+        addButton("SIGN IN", Color.rgb(20, 115, 190)) {
 
-            if (email.isEmpty() || password.isEmpty()) {
+            val userEmail = email.text.toString().trim()
+            val userPassword = password.text.toString()
+
+            if (userEmail.isBlank() || userPassword.isBlank()) {
                 Toast.makeText(
                     context,
-                    "Please enter email and password",
+                    "Enter email and password.",
                     Toast.LENGTH_SHORT
                 ).show()
-                return@setOnClickListener
+                return@addButton
             }
 
-            signInButton.isEnabled = false
-            signInButton.text = "PLEASE WAIT..."
+            val success = AccountManager.signIn(
+                context,
+                userEmail,
+                userPassword
+            )
 
-            FirebaseAuth.getInstance()
-                .signInWithEmailAndPassword(email, password)
-                .addOnCompleteListener { task ->
+            if (success) {
+                Toast.makeText(
+                    context,
+                    "Login successful!",
+                    Toast.LENGTH_SHORT
+                ).show()
 
-                    signInButton.isEnabled = true
-                    signInButton.text = "SIGN IN"
-
-                    if (task.isSuccessful) {
-                        onSignInSuccess()
-                    } else {
-                        Toast.makeText(
-                            context,
-                            task.exception?.localizedMessage
-                                ?: "Sign in failed",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                }
+                onSignInSuccess()
+            } else {
+                Toast.makeText(
+                    context,
+                    "Incorrect email or password.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
 
-        val forgotPassword = TextView(context).apply {
-            text = "Forgot Password?"
-            textSize = 15f
-            setTextColor(Color.CYAN)
-            gravity = Gravity.CENTER
-            setPadding(0, 25, 0, 20)
-        }
-
-        root.addView(forgotPassword)
-
-        forgotPassword.setOnClickListener {
-            onForgotPasswordClick()
-        }
-
-        val createAccount = TextView(context).apply {
-            text = "Don't have an account? Create Account"
-            textSize = 15f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(0, 15, 0, 15)
-        }
-
-        root.addView(createAccount)
-
-        createAccount.setOnClickListener {
+        addButton("CREATE NEW ACCOUNT", Color.DKGRAY) {
             onSignUpClick()
+        }
+
+        addButton("SKIP FOR TESTING", Color.rgb(80, 65, 130)) {
+            onSkip()
         }
 
         return ScrollView(context).apply {
             isFillViewport = true
-            setBackgroundColor(backgroundColor)
+            isVerticalScrollBarEnabled = true
             addView(root)
+            setBackgroundColor(Color.rgb(10, 16, 35))
         }
     }
 }
