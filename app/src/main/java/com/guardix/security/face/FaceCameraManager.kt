@@ -11,9 +11,11 @@ import androidx.lifecycle.LifecycleOwner
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class FaceCameraManager(
     private val context: Context,
@@ -39,9 +41,16 @@ class FaceCameraManager(
     }
 
     private var currentStep = Step.WAITING_FOR_FACE
+
+    private var blinkCount = 0
     private var eyesClosed = false
-    private var isProcessing = false
+
+    private val isProcessing = AtomicBoolean(false)
+
     private var isStarted = false
+    private var isShutdown = false
+
+    private var cameraProvider: ProcessCameraProvider? = null
 
     private val cameraExecutor: ExecutorService =
         Executors.newSingleThreadExecutor()
@@ -49,7 +58,7 @@ class FaceCameraManager(
     private val detectorOptions =
         FaceDetectorOptions.Builder()
             .setPerformanceMode(
-                FaceDetectorOptions.PERFORMANCE_MODE_FAST
+                FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE
             )
             .setClassificationMode(
                 FaceDetectorOptions.CLASSIFICATION_MODE_ALL
@@ -57,12 +66,13 @@ class FaceCameraManager(
             .enableTracking()
             .build()
 
-    private val faceDetector =
+    private val faceDetector: FaceDetector =
         FaceDetection.getClient(detectorOptions)
 
+    @Synchronized
     fun startCamera() {
 
-        if (isStarted) return
+        if (isStarted || isShutdown) return
 
         isStarted = true
 
@@ -71,10 +81,13 @@ class FaceCameraManager(
 
         cameraProviderFuture.addListener({
 
+            if (isShutdown) return@addListener
+
             try {
 
-                val cameraProvider =
-                    cameraProviderFuture.get()
+                val provider = cameraProviderFuture.get()
+
+                cameraProvider = provider
 
                 val preview = Preview.Builder()
                     .build()
@@ -92,44 +105,68 @@ class FaceCameraManager(
 
                 imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
 
-                    if (isProcessing) {
+                    if (
+                        isShutdown ||
+                        !isStarted ||
+                        !isProcessing.compareAndSet(false, true)
+                    ) {
                         imageProxy.close()
                         return@setAnalyzer
                     }
 
-                    val mediaImage =
-                        imageProxy.image
+                    val mediaImage = imageProxy.image
 
                     if (mediaImage == null) {
+                        isProcessing.set(false)
                         imageProxy.close()
                         return@setAnalyzer
                     }
 
-                    isProcessing = true
+                    try {
 
-                    val inputImage = InputImage.fromMediaImage(
-                        mediaImage,
-                        imageProxy.imageInfo.rotationDegrees
-                    )
-
-                    faceDetector.process(inputImage)
-                        .addOnSuccessListener { faces ->
-                            processFaces(faces)
-                        }
-                        .addOnFailureListener {
-                            listener.onError(
-                                "Face detection failed"
+                        val inputImage =
+                            InputImage.fromMediaImage(
+                                mediaImage,
+                                imageProxy.imageInfo.rotationDegrees
                             )
-                        }
-                        .addOnCompleteListener {
-                            isProcessing = false
-                            imageProxy.close()
-                        }
+
+                        faceDetector.process(inputImage)
+                            .addOnSuccessListener { faces ->
+
+                                if (!isShutdown && isStarted) {
+                                    processFaces(faces)
+                                }
+                            }
+                            .addOnFailureListener { error ->
+
+                                if (!isShutdown) {
+                                    listener.onError(
+                                        error.localizedMessage
+                                            ?: "Face detection failed"
+                                    )
+                                }
+                            }
+                            .addOnCompleteListener {
+
+                                isProcessing.set(false)
+                                imageProxy.close()
+                            }
+
+                    } catch (e: Exception) {
+
+                        isProcessing.set(false)
+                        imageProxy.close()
+
+                        listener.onError(
+                            e.localizedMessage
+                                ?: "Image processing failed"
+                        )
+                    }
                 }
 
-                cameraProvider.unbindAll()
+                provider.unbindAll()
 
-                cameraProvider.bindToLifecycle(
+                provider.bindToLifecycle(
                     lifecycleOwner,
                     CameraSelector.DEFAULT_FRONT_CAMERA,
                     preview,
@@ -145,7 +182,8 @@ class FaceCameraManager(
                 isStarted = false
 
                 listener.onError(
-                    e.localizedMessage ?: "Unable to start camera"
+                    e.localizedMessage
+                        ?: "Unable to start camera"
                 )
             }
 
@@ -155,19 +193,24 @@ class FaceCameraManager(
     private fun processFaces(faces: List<Face>) {
 
         if (faces.isEmpty()) {
+
+            eyesClosed = false
+
             listener.onFaceNotDetected()
+
             listener.onStatusChanged(
-                "No face detected. Look at the camera."
+                "No face detected. Please show your face."
             )
+
             return
         }
 
-        listener.onFaceDetected()
-
         val face = faces.maxByOrNull {
             it.boundingBox.width() *
-                    it.boundingBox.height()
+                it.boundingBox.height()
         } ?: return
+
+        listener.onFaceDetected()
 
         when (currentStep) {
 
@@ -176,7 +219,7 @@ class FaceCameraManager(
                 currentStep = Step.WAITING_FOR_BLINK
 
                 listener.onStatusChanged(
-                    "Face detected. Please blink your eyes."
+                    "Face detected. Please blink twice."
                 )
             }
 
@@ -204,7 +247,10 @@ class FaceCameraManager(
         val rightEye =
             face.rightEyeOpenProbability ?: return
 
-        if (leftEye < 0.35f && rightEye < 0.35f) {
+        if (
+            leftEye < 0.30f &&
+            rightEye < 0.30f
+        ) {
             eyesClosed = true
         }
 
@@ -215,11 +261,22 @@ class FaceCameraManager(
         ) {
 
             eyesClosed = false
-            currentStep = Step.WAITING_FOR_LEFT
+            blinkCount++
 
-            listener.onStatusChanged(
-                "Blink detected. Now turn your head left."
-            )
+            if (blinkCount >= 2) {
+
+                currentStep = Step.WAITING_FOR_LEFT
+
+                listener.onStatusChanged(
+                    "Two blinks detected. Turn your head left."
+                )
+
+            } else {
+
+                listener.onStatusChanged(
+                    "First blink detected. Blink one more time."
+                )
+            }
         }
     }
 
@@ -242,31 +299,40 @@ class FaceCameraManager(
             currentStep = Step.COMPLETED
 
             listener.onStatusChanged(
-                "Face movement checks completed."
+                "Liveness verification completed."
             )
 
             listener.onLivenessCompleted()
         }
     }
 
+    @Synchronized
     fun stopCamera() {
 
         isStarted = false
 
         try {
-            val cameraProvider =
-                ProcessCameraProvider.getInstance(context).get()
-
-            cameraProvider.unbindAll()
-
+            cameraProvider?.unbindAll()
         } catch (_: Exception) {
         }
 
-        faceDetector.close()
+        isProcessing.set(false)
     }
 
+    @Synchronized
     fun shutdown() {
+
+        if (isShutdown) return
+
         stopCamera()
+
+        isShutdown = true
+
+        try {
+            faceDetector.close()
+        } catch (_: Exception) {
+        }
+
         cameraExecutor.shutdown()
     }
 }
