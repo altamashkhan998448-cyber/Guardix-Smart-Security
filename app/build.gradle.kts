@@ -38,19 +38,22 @@ kotlin {
 
 dependencies {
 
-    // Firebase Authentication
+    // Firebase - existing dependencies
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-auth")
 
     // AndroidX Activity
     implementation("androidx.activity:activity-ktx:1.10.1")
 
-    // CameraX - Front Camera
+    // CameraX
     implementation("androidx.camera:camera-core:1.4.2")
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")
     implementation("androidx.camera:camera-view:1.4.2")
 
-    // ML Kit - Face Detection
+    // ML Kit Face Detection
     implementation("com.google.mlkit:face-detection:16.1.7")
+
+    // TensorFlow Lite Face Recognition Engine
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
 }
