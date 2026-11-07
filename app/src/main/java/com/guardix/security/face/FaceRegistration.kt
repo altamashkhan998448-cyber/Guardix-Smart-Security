@@ -3,17 +3,21 @@ package com.guardix.security.face
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class FaceRegistration(
     private val context: Context,
@@ -25,7 +29,18 @@ class FaceRegistration(
     private lateinit var statusText: TextView
     private lateinit var cameraManager: FaceCameraManager
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val registrationExecutor =
+        Executors.newSingleThreadExecutor()
+
+    private val isProcessing = AtomicBoolean(false)
+
+    @Volatile
     private var completed = false
+
+    @Volatile
+    private var stopped = false
 
     fun create(): View {
 
@@ -48,7 +63,7 @@ class FaceRegistration(
         root.addView(title)
 
         val description = TextView(context).apply {
-            text = "Complete the following face movement checks."
+            text = "Complete the following face verification steps."
             textSize = 15f
             setTextColor(Color.LTGRAY)
             gravity = Gravity.CENTER
@@ -81,7 +96,7 @@ class FaceRegistration(
 
         val steps = TextView(context).apply {
             text = """
-                STEP 1: Blink your eyes
+                STEP 1: Blink your eyes twice
                 STEP 2: Turn your head left
                 STEP 3: Turn your head right
             """.trimIndent()
@@ -101,37 +116,33 @@ class FaceRegistration(
             object : FaceCameraManager.FaceListener {
 
                 override fun onFaceDetected() {
-                    statusText.text = "Face detected."
+                    updateStatus("Face detected.")
                 }
 
                 override fun onFaceNotDetected() {
-                    statusText.text = "Please show your face."
+                    updateStatus("Please show your face.")
                 }
 
                 override fun onStatusChanged(status: String) {
-                    statusText.text = status
+                    updateStatus(status)
                 }
 
+                // पुराने callback से Registration पूरा नहीं होगा।
                 override fun onLivenessCompleted() {
+                    updateStatus(
+                        "Face image is required. Please try again."
+                    )
+                }
 
-                    if (completed) return
-
-                    completed = true
-
-                    statusText.text =
-                        "Face movement checks completed!"
-
-                    Toast.makeText(
-                        context,
-                        "Face checks completed successfully",
-                        Toast.LENGTH_SHORT
-                    ).show()
-
-                    onRegistrationComplete()
+                // नया callback: कैमरे से मिली वास्तविक Face Bitmap।
+                override fun onLivenessCompleted(
+                    faceBitmap: Bitmap
+                ) {
+                    processFaceRegistration(faceBitmap)
                 }
 
                 override fun onError(message: String) {
-                    statusText.text = message
+                    updateStatus(message)
                 }
             }
         )
@@ -139,7 +150,119 @@ class FaceRegistration(
         return root
     }
 
+    private fun processFaceRegistration(faceBitmap: Bitmap) {
+
+        if (completed || stopped) {
+            faceBitmap.recycle()
+            return
+        }
+
+        if (!isProcessing.compareAndSet(false, true)) {
+            faceBitmap.recycle()
+            return
+        }
+
+        updateStatus("Creating your face identity...")
+
+        try {
+
+            registrationExecutor.execute {
+
+                var success = false
+                var errorMessage = "Face registration failed."
+
+                try {
+
+                    // Generate face embedding.
+                    val embedding =
+                        FaceRecognitionEngine(context).use { engine ->
+                            engine.getFaceEmbedding(faceBitmap)
+                        }
+
+                    // Save encrypted embedding locally.
+                    val faceStorage = FaceStorage(context)
+
+                    success = faceStorage.saveFaceEmbedding(
+                        embedding
+                    )
+
+                    if (!success) {
+                        errorMessage =
+                            "Unable to securely save face data."
+                    }
+
+                } catch (e: Exception) {
+
+                    errorMessage =
+                        e.localizedMessage
+                            ?: "Face processing failed."
+                } finally {
+
+                    if (!faceBitmap.isRecycled) {
+                        faceBitmap.recycle()
+                    }
+                }
+
+                mainHandler.post {
+
+                    isProcessing.set(false)
+
+                    if (stopped || completed) return@post
+
+                    if (success) {
+
+                        completed = true
+
+                        statusText.text =
+                            "Face registered successfully!"
+
+                        Toast.makeText(
+                            context,
+                            "Face registration successful",
+                            Toast.LENGTH_LONG
+                        ).show()
+
+                        onRegistrationComplete()
+
+                    } else {
+
+                        statusText.text = errorMessage
+
+                        Toast.makeText(
+                            context,
+                            errorMessage,
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+
+        } catch (e: Exception) {
+
+            isProcessing.set(false)
+
+            if (!faceBitmap.isRecycled) {
+                faceBitmap.recycle()
+            }
+
+            updateStatus(
+                e.localizedMessage ?: "Registration could not start."
+            )
+        }
+    }
+
+    private fun updateStatus(message: String) {
+
+        mainHandler.post {
+            if (!stopped && ::statusText.isInitialized) {
+                statusText.text = message
+            }
+        }
+    }
+
     fun start() {
+
+        if (stopped || completed) return
 
         if (
             ContextCompat.checkSelfPermission(
@@ -147,9 +270,7 @@ class FaceRegistration(
                 Manifest.permission.CAMERA
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            statusText.text =
-                "Camera permission is required."
-
+            updateStatus("Camera permission is required.")
             return
         }
 
@@ -157,8 +278,15 @@ class FaceRegistration(
     }
 
     fun stop() {
+
+        if (stopped) return
+
+        stopped = true
+
         if (::cameraManager.isInitialized) {
             cameraManager.shutdown()
         }
+
+        registrationExecutor.shutdownNow()
     }
 }
