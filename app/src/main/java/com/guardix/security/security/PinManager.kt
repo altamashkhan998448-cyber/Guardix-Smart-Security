@@ -2,7 +2,8 @@ package com.guardix.security.security
 
 import android.content.Context
 import android.util.Base64
-import com.google.firebase.auth.FirebaseAuth
+import com.guardix.security.account.AccountManager
+import com.guardix.security.utils.AppPreferences
 import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.SecretKeyFactory
@@ -21,11 +22,21 @@ object PinManager {
             Context.MODE_PRIVATE
         )
 
-    private fun getUserKey(): String? {
-        return FirebaseAuth.getInstance().currentUser?.uid
+    private fun getUserKey(context: Context): String? {
+
+        if (AppPreferences.isDemoMode(context)) {
+            return "demo"
+        }
+
+        return AccountManager.getCurrentEmail(context)
+            ?.replace(".", "_")
+            ?.replace("@", "_at_")
     }
 
-    private fun hashPin(pin: String, salt: ByteArray): ByteArray {
+    private fun hashPin(
+        pin: String,
+        salt: ByteArray
+    ): ByteArray {
 
         val spec = PBEKeySpec(
             pin.toCharArray(),
@@ -46,17 +57,19 @@ object PinManager {
 
     fun hasPin(context: Context): Boolean {
 
-        val uid = getUserKey() ?: return false
-
+        val key = getUserKey(context) ?: return false
         val preferences = getPreferences(context)
 
-        return preferences.contains("${uid}_hash") &&
-                preferences.contains("${uid}_salt")
+        return preferences.contains("${key}_hash") &&
+                preferences.contains("${key}_salt")
     }
 
-    fun savePin(context: Context, pin: String): Boolean {
+    fun savePin(
+        context: Context,
+        pin: String
+    ): Boolean {
 
-        val uid = getUserKey() ?: return false
+        val key = getUserKey(context) ?: return false
 
         if (!pin.matches(Regex("^\\d{4,8}$"))) {
             return false
@@ -71,12 +84,18 @@ object PinManager {
 
             getPreferences(context).edit()
                 .putString(
-                    "${uid}_salt",
-                    Base64.encodeToString(salt, Base64.NO_WRAP)
+                    "${key}_salt",
+                    Base64.encodeToString(
+                        salt,
+                        Base64.NO_WRAP
+                    )
                 )
                 .putString(
-                    "${uid}_hash",
-                    Base64.encodeToString(hash, Base64.NO_WRAP)
+                    "${key}_hash",
+                    Base64.encodeToString(
+                        hash,
+                        Base64.NO_WRAP
+                    )
                 )
                 .commit()
 
@@ -85,9 +104,12 @@ object PinManager {
         }
     }
 
-    fun verifyPin(context: Context, enteredPin: String): Boolean {
+    fun verifyPin(
+        context: Context,
+        enteredPin: String
+    ): Boolean {
 
-        val uid = getUserKey() ?: return false
+        val key = getUserKey(context) ?: return false
 
         if (!enteredPin.matches(Regex("^\\d{4,8}$"))) {
             return false
@@ -98,12 +120,12 @@ object PinManager {
             val preferences = getPreferences(context)
 
             val saltString = preferences.getString(
-                "${uid}_salt",
+                "${key}_salt",
                 null
             ) ?: return false
 
             val hashString = preferences.getString(
-                "${uid}_hash",
+                "${key}_hash",
                 null
             ) ?: return false
 
@@ -131,11 +153,11 @@ object PinManager {
 
     fun deletePin(context: Context): Boolean {
 
-        val uid = getUserKey() ?: return false
+        val key = getUserKey(context) ?: return false
 
         return getPreferences(context).edit()
-            .remove("${uid}_salt")
-            .remove("${uid}_hash")
+            .remove("${key}_salt")
+            .remove("${key}_hash")
             .commit()
     }
 }
